@@ -1,7 +1,7 @@
 {
   "name": "investment-analyst",
-  "version": "2.4.0",
-  "description": "Sweden-first equity research on free, keyless primary sources. Enforces provenance, temporal validity and source independence in code rather than instructions. TTM engine, valuation integrity gate, thesis ledger with automatic breakers, and a 103-test regression suite.",
+  "version": "2.5.0",
+  "description": "Sweden-first equity research on free, keyless primary sources — no API keys, no paid feeds, no identifying requests. Enforces provenance, temporal validity and source independence in code rather than instructions. TTM engine, valuation integrity gate, thesis ledger, portfolio review, daily market screen, and a 374-test regression suite.",
   "author": {
     "name": "Adam Haglund"
   },
@@ -11,7 +11,8 @@
     "dcf",
     "fundamental-analysis",
     "nasdaq-stockholm",
-    "sec-edgar",
+    "first-north",
+    "esef",
     "investing"
   ]
 }
