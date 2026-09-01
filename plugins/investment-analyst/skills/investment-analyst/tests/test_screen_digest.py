@@ -35,6 +35,7 @@ Covers, per the review this script was fixed against:
     as the tradeable line.
   - Swedish and English number formats surviving the parse.
 """
+import json
 import datetime
 import os
 import sys
@@ -328,12 +329,17 @@ class LiquidityFloorCutsAndReports(unittest.TestCase):
         self.assertIn("no dated FX rate", survivors[0]["liquidity_status"])
 
 
-class PreMarketRefusalGuard(unittest.TestCase):
-    """B1: before the 09:00 open every row on the Nasdaq screener carries a
-    blank intraday turnover - the belt-and-braces guard must refuse to
-    publish rather than silently print a well-formed, empty digest."""
+class PreMarketRunIsSupported(unittest.TestCase):
+    """B1, after the fix: a blank intraday turnover is NORMAL before the 09:00
+    open and must not stop the run.
 
-    def test_run_refuses_when_most_of_the_screener_is_blank(self):
+    The liquidity floor reads the last completed daily bar, so a pre-open run
+    has everything it needs - and yesterday's bar is unambiguously final,
+    where an evening run has to judge whether today's session has settled.
+    An earlier guard refused to publish whenever the screener field was blank;
+    it outlived the dependency it protected and blocked the better schedule."""
+
+    def test_run_proceeds_when_the_screener_is_blank_before_the_open(self):
         liq = {"OB-%d" % i: {"turnover": None, "volume": None, "percent_change_1d": None}
               for i in range(80)}
         liq.update({"OB-%d" % i: {"turnover": 1000.0, "volume": 10.0, "percent_change_1d": 0.1}
@@ -348,9 +354,9 @@ class PreMarketRefusalGuard(unittest.TestCase):
             self.addCleanup(p.stop)
         args = mock.Mock(window="1m", venue="xsto,ssme", limit=20,
                          liquidity_floor=1_000_000.0, include_illiquid=False, budget=30.0)
-        with self.assertRaises(SystemExit) as ctx:
-            sd.run(args)
-        self.assertIn("REFUSING TO PUBLISH", str(ctx.exception))
+        result = sd.run(args)   # must NOT raise: the floor does not read this field
+        self.assertNotIn("REFUSING TO PUBLISH", json.dumps(result, default=str))
+        self.assertIn("universe", result)
 
     def test_run_proceeds_when_the_screener_is_mostly_populated(self):
         liq = {"OB-%d" % i: {"turnover": 1000.0, "volume": 10.0, "percent_change_1d": 0.1}
