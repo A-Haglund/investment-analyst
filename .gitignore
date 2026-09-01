@@ -16,3 +16,6 @@ __pycache__/
 /gp_patent.html
 /pv.html
 /pv_dl.html
+
+# Build output
+/dist/

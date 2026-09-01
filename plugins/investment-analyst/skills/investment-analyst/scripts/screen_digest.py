@@ -958,12 +958,25 @@ def _extract_dividend_per_share(title):
     return mfn_news.to_number(raw.replace(",", ".")) if raw else None
 
 
-def check_corporate_actions(name, date_from, date_to, price=None):
+def check_corporate_actions(name, date_from, last_close_date, date_to, price=None):
     """Was there a split/rights issue/spin-off/dividend/other per-share-
     breaking action inside [date_from, date_to]? A hit means the return
     computed against nordic_shares' UNADJUSTED price series is a technical
     artefact, not a real fall - see corporate_actions.py's own module
     docstring.
+
+    The window is split in two against `last_close_date` (the same date the
+    candidate's return was measured to - it may fall on the same day as
+    `date_to`, or earlier), for the same reason check_regulatory_news splits
+    its own window: an ex-dividend date or a split EFFECTIVE this morning,
+    before the open, is not an explanation of a fall measured to yesterday's
+    close - the fall predates the action. Only actions on or before
+    `last_close_date` can explain the fall (`has_breaking_action`,
+    `events`); anything strictly after it is new and not yet priced in, and
+    is reported separately under `since_last_close` so it is never silently
+    read as having caused a fall it postdates. One fetch across the WHOLE
+    [date_from, date_to] range is partitioned locally into the two windows
+    rather than fetching twice.
 
     Refuses (returns `not checked`, naming the candidates seen) rather than
     silently take the top-ranked Nasdaq CNS company when MORE THAN ONE
@@ -988,15 +1001,21 @@ def check_corporate_actions(name, date_from, date_to, price=None):
     check and split_adjustment_factor is the tool built to answer that.
     """
     if corporate_actions is None:
-        return {"status": "not checked", "reason": "corporate_actions.py not importable"}
+        return {"status": "not checked", "reason": "corporate_actions.py not importable",
+                "since_last_close": {"status": "not checked",
+                                     "reason": "corporate_actions.py not importable"}}
     try:
         hits = corporate_actions.resolve_company(name)
     except (Exception, SystemExit) as exc:
-        return {"status": "not checked", "reason": "CNS name resolution failed: %s" % exc}
+        reason = "CNS name resolution failed: %s" % exc
+        return {"status": "not checked", "reason": reason,
+                "since_last_close": {"status": "not checked", "reason": reason}}
     if not hits:
         return {"status": "checked", "has_breaking_action": False, "events": [],
                 "note": "no Nasdaq CNS company matched %r; treated as no action "
-                        "found, which is not proof there was none" % name}
+                        "found, which is not proof there was none" % name,
+                "since_last_close": {"status": "checked", "count": 0, "events": [],
+                                     "window": [last_close_date, date_to]}}
 
     distinct = sorted(set(h["company"] for h in hits))
     try:
@@ -1005,16 +1024,19 @@ def check_corporate_actions(name, date_from, date_to, price=None):
     except (Exception, SystemExit):                 # pragma: no cover - defensive
         top_is_exact = True
     if len(distinct) > 1 and not top_is_exact:
-        return {"status": "not checked",
-                "reason": "ambiguous Nasdaq CNS match for %r - candidates seen: %s"
-                          % (name, "; ".join(distinct[:6]))}
+        reason = ("ambiguous Nasdaq CNS match for %r - candidates seen: %s"
+                  % (name, "; ".join(distinct[:6])))
+        return {"status": "not checked", "reason": reason,
+                "since_last_close": {"status": "not checked", "reason": reason}}
     company = hits[0]["company"]
 
     breaks_price = corporate_actions.BREAKS_PER_SHARE | {"DIVIDEND"}
     try:
         rows = corporate_actions.corporate_actions_between(company, date_from, date_to, pages=2)
     except (Exception, SystemExit) as exc:
-        return {"status": "not checked", "reason": str(exc)}
+        reason = str(exc)
+        return {"status": "not checked", "reason": reason,
+                "since_last_close": {"status": "not checked", "reason": reason}}
     breaking = [r for r in rows if r.get("type") in breaks_price]
 
     try:
@@ -1040,17 +1062,41 @@ def check_corporate_actions(name, date_from, date_to, price=None):
                     ev["dividend_yield_pct"] = 100.0 * amt / price
         events.append(ev)
 
-    return {"status": "checked", "has_breaking_action": bool(events),
-            "cns_company": company, "events": events}
+    explains = [ev for ev in events if (ev.get("date") or "") <= last_close_date]
+    since_close = [ev for ev in events if (ev.get("date") or "") > last_close_date]
+
+    return {"status": "checked", "has_breaking_action": bool(explains),
+            "cns_company": company, "events": explains,
+            "since_last_close": {"status": "checked", "count": len(since_close),
+                                 "events": since_close, "window": [last_close_date, date_to]}}
 
 
 # ---------------------------------------------------------------------------
 # stage 6: regulatory news
 # ---------------------------------------------------------------------------
 
-def check_regulatory_news(name, date_from, date_to, isin=None, lei=None):
-    """Was there a MAR-flagged release inside [date_from, date_to]? The
-    discriminator between "fell on information" and "fell on flows".
+def check_regulatory_news(name, date_from, last_close_date, date_to, isin=None, lei=None):
+    """Was there a MAR-flagged release inside [date_from, last_close_date]?
+    The discriminator between "fell on information" and "fell on flows".
+
+    The window is split in two against `last_close_date` - the same date
+    the candidate's return was measured to (it may equal `date_to`, or fall
+    earlier than it, e.g. a pre-open run where `date_to` is today but the
+    last completed session was yesterday). Only a release on or before
+    `last_close_date` can EXPLAIN a fall already measured to that close, so
+    `has_release`/`items` (and therefore fell_on_information/fell_on_flows)
+    are decided from that window alone. A release strictly after
+    `last_close_date` - up to `date_to` - is new information the market has
+    not priced yet; it is orthogonal to the fall classification and is
+    reported separately under `since_last_close`, never folded into
+    `has_release`. Getting this backwards would file a 07:15 release as
+    having caused a fall measured to yesterday's close, which is causally
+    impossible - Swedish issuers publish in a heavy wave from ~06:30-08:30,
+    right before this screen's own pre-open scheduled run.
+
+    Identity is resolved ONCE and news is fetched ONCE for the whole
+    [date_from, date_to] span; both windows are cut locally from that same
+    fetch, never a second call.
 
     Identity comes from venues_se.mfn_identity(name, isin, lei), which
     accepts ONLY an MFN entity whose own ISIN or LEI matches the one FIRDS
@@ -1060,43 +1106,81 @@ def check_regulatory_news(name, date_from, date_to, isin=None, lei=None):
     attached THEIR news to this candidate.
     """
     if mfn_news is None:
-        return {"status": "not checked", "reason": "mfn_news.py not importable"}
+        reason = "mfn_news.py not importable"
+        return {"status": "not checked", "reason": reason,
+                "since_last_close": {"status": "not checked", "reason": reason}}
     if venues_se is None:
-        return {"status": "not checked",
-                "reason": "venues_se.py not importable - cannot verify MFN identity"}
+        reason = "venues_se.py not importable - cannot verify MFN identity"
+        return {"status": "not checked", "reason": reason,
+                "since_last_close": {"status": "not checked", "reason": reason}}
     try:
         identity = venues_se.mfn_identity(name, isin=isin, lei=lei)
     except (Exception, SystemExit) as exc:
-        return {"status": "not checked", "reason": "MFN identity resolution failed: %s" % exc}
+        reason = "MFN identity resolution failed: %s" % exc
+        return {"status": "not checked", "reason": reason,
+                "since_last_close": {"status": "not checked", "reason": reason}}
     if not identity or not identity.get("slug"):
-        return {"status": "checked", "has_release": False, "window": [date_from, date_to],
+        return {"status": "checked", "has_release": False,
+                "window": [date_from, last_close_date],
                 "items": [], "note": "no MFN entity's ISIN/LEI matched %r; treated as no "
-                                     "release found, which is not proof there was none" % name}
+                                     "release found, which is not proof there was none" % name,
+                "since_last_close": {"status": "checked", "count": 0, "items": [],
+                                     "window": [last_close_date, date_to]}}
     slug = identity["slug"]
     try:
         raw = mfn_news.fetch_company_pages(slug, pages=2)
     except (Exception, SystemExit) as exc:
-        return {"status": "not checked", "reason": "MFN fetch failed for slug %s: %s"
-                % (slug, exc)}
+        reason = "MFN fetch failed for slug %s: %s" % (slug, exc)
+        return {"status": "not checked", "reason": reason,
+                "since_last_close": {"status": "not checked", "reason": reason}}
     try:
         items = [mfn_news.flatten(i) for i in raw]
     except (Exception, SystemExit) as exc:
-        return {"status": "not checked", "reason": "MFN item parsing failed: %s" % exc}
-    in_window = [i for i in items if date_from <= (i.get("date") or "")[:10] <= date_to]
+        reason = "MFN item parsing failed: %s" % exc
+        return {"status": "not checked", "reason": reason,
+                "since_last_close": {"status": "not checked", "reason": reason}}
+
+    in_window = [i for i in items
+                if date_from <= (i.get("date") or "")[:10] <= last_close_date]
     regulatory = [i for i in in_window if i.get("regulatory")]
-    return {"status": "checked", "has_release": bool(regulatory), "window": [date_from, date_to],
-            "slug": slug,
-            "items": [{"date": i["date"][:10], "title": i["title"]} for i in regulatory[:3]]}
+
+    since_close = [i for i in items
+                  if last_close_date < (i.get("date") or "")[:10] <= date_to]
+    regulatory_since_close = [i for i in since_close if i.get("regulatory")]
+
+    return {"status": "checked", "has_release": bool(regulatory),
+            "window": [date_from, last_close_date], "slug": slug,
+            "items": [{"date": i["date"][:10], "title": i["title"]} for i in regulatory[:3]],
+            "since_last_close": {
+                "status": "checked", "count": len(regulatory_since_close),
+                "window": [last_close_date, date_to],
+                "items": [{"date": i["date"][:19], "title": i["title"]}
+                         for i in regulatory_since_close]}}
 
 
 def deep_check_candidate(candidate, date_from, date_to):
+    """The two deep checks are cut against `last_close_date` - the same
+    date the candidate's OWN return was measured to (candidate["returns"]
+    ["as_of"]), not `date_to` (today) - so a release or corporate action
+    published this morning, before the open, is never read as explaining a
+    fall already measured to yesterday's close. See check_regulatory_news
+    and check_corporate_actions docstrings. Falls back to `date_to` only if
+    the return itself was somehow never checked (should not happen for a
+    candidate that survived select_worst_decile, which requires a checked
+    return) - in that degenerate case there is no known close date to
+    prefer, and since_last_close collapses to an empty window rather than
+    guessing one.
+    """
     raw_name = candidate["primary"].get("name") or candidate.get("name")
     name = _strip_class_suffix(raw_name)
     isin = candidate["primary"].get("isin")
     lei = candidate.get("lei")
     price = candidate["primary"].get("price")
-    return {"corporate_action": check_corporate_actions(name, date_from, date_to, price=price),
-            "regulatory_news": check_regulatory_news(name, date_from, date_to, isin=isin, lei=lei)}
+    last_close_date = (candidate.get("returns") or {}).get("as_of") or date_to
+    return {"corporate_action": check_corporate_actions(
+                name, date_from, last_close_date, date_to, price=price),
+            "regulatory_news": check_regulatory_news(
+                name, date_from, last_close_date, date_to, isin=isin, lei=lei)}
 
 
 def deep_check_parallel(candidates, date_from, date_to, budget, max_workers=6):
@@ -1344,6 +1428,20 @@ def run(args):
     fell_on_flows = [c for c in regulatory_checked
                      if not c["regulatory_news"].get("has_release")]
 
+    # Orthogonal to the fell_on_information/fell_on_flows/not_classified
+    # split above: a candidate in ANY bucket (including technical_moves) may
+    # ALSO carry a regulatory release published after its own last completed
+    # close - new information not yet priced, and the single most
+    # time-critical thing a reader running this before the 09:00 open needs
+    # to see first. Surfaced as its own count here (used for the text
+    # summary line) and as a per-candidate marker in print_text/_line_for -
+    # never folded into fell_on_information itself (see check_regulatory_
+    # news's docstring for why that would be causally backwards).
+    since_close_flagged = [c for c in candidates
+                           if ((c.get("regulatory_news") or {}).get("since_last_close") or {})
+                              .get("count")]
+    since_close_news_total = len(since_close_flagged)
+
     decile_label = "worst decile"
     if degenerate_pool:
         decile_label += (" (degenerate: fewer than %d usable falling names, or ties "
@@ -1392,6 +1490,8 @@ def run(args):
         "fell_on_flows_total": len(fell_on_flows),
         "not_classified": not_classified[:args.limit],
         "not_classified_total": len(not_classified),
+        "since_last_close_news_total": since_close_news_total,
+        "since_last_close_news_names": sorted(c["name"] or "?" for c in since_close_flagged),
         "partial": budget.exceeded(),
         "budget_seconds": args.budget,
         "elapsed_seconds": round(budget.elapsed(), 1),
@@ -1432,6 +1532,29 @@ def _line_for(c, window):
     else:
         parts.append("    regulatory news: NOT CLASSIFIED (%s) - not evidence of no news"
                      % news.get("reason", "?"))
+    since_news = news.get("since_last_close") or {}
+    if since_news.get("status") == "checked" and since_news.get("count"):
+        parts.append("    !! NEWS SINCE LAST CLOSE (%d, not yet priced in): %s"
+                     % (since_news["count"],
+                        "; ".join("%s %s" % (i["date"], i["title"])
+                                 for i in since_news.get("items") or [])))
+    elif since_news.get("status") != "checked":
+        parts.append("    news since last close: NOT CHECKED (%s)"
+                     % since_news.get("reason", "?"))
+    ca = c.get("corporate_action") or {}
+    ca_since = ca.get("since_last_close") or {}
+    if ca_since.get("status") == "checked" and ca_since.get("count"):
+        parts.append("    !! CORPORATE ACTION SINCE LAST CLOSE (%d, not yet priced in): %s"
+                     % (ca_since["count"],
+                        "; ".join("%s %s" % (ev.get("date"), ev.get("type"))
+                                 for ev in ca_since.get("events") or [])))
+    elif ca_since.get("status") != "checked" and ca.get("status") == "checked":
+        # corporate_action itself resolved (so has_breaking_action/events are
+        # meaningful) but the since-close half of the SAME check degraded -
+        # should not happen in practice (they share one fetch), but printed
+        # rather than silently dropped if it ever does.
+        parts.append("    corporate action since last close: NOT CHECKED (%s)"
+                     % ca_since.get("reason", "?"))
     if short.get("status") == "checked":
         stale_flag = " [STALE]" if short.get("stale") else ""
         parts.append("    short interest: %s%% as of %s%s (30d %s)"
@@ -1453,6 +1576,14 @@ def print_text(result):
     if result["decile_degenerate"]:
         print("!! DEGENERATE DECILE - too few falling names, or ties at the cutoff, "
               "so the set below is not a real bottom decile.")
+    if result["since_last_close_news_total"]:
+        print("!! %d candidate(s) have regulatory news published SINCE their last "
+              "completed close - not yet priced in, and not what explained the fall "
+              "below. See the [NEWS SINCE LAST CLOSE] marker on each: %s"
+              % (result["since_last_close_news_total"],
+                 ", ".join(result["since_last_close_news_names"])))
+    else:
+        print("No candidate has regulatory news since its last completed close.")
     print()
     u = result["universe"]
     print("Universe: %d ISIN lines, %d issuers, venues %s"
@@ -1690,8 +1821,8 @@ def _selftest():
     real_ca = corporate_actions
     corporate_actions = FakeCA
     try:
-        split_hit = check_corporate_actions("Splitty AB", "2026-08-01", "2026-08-31")
-        no_hit = check_corporate_actions("Clean AB", "2026-08-01", "2026-08-31")
+        split_hit = check_corporate_actions("Splitty AB", "2026-08-01", "2026-08-31", "2026-08-31")
+        no_hit = check_corporate_actions("Clean AB", "2026-08-01", "2026-08-31", "2026-08-31")
     finally:
         corporate_actions = real_ca
     _assert(split_hit["status"] == "checked" and split_hit["has_breaking_action"] is True,
@@ -1723,7 +1854,8 @@ def _selftest():
 
     corporate_actions = FakeCAAmbiguous
     try:
-        ambiguous = check_corporate_actions("AstraZeneca PLC", "2026-08-01", "2026-08-31")
+        ambiguous = check_corporate_actions("AstraZeneca PLC", "2026-08-01", "2026-08-31",
+                                            "2026-08-31")
     finally:
         corporate_actions = real_ca
     _assert(ambiguous["status"] == "not checked",
@@ -1766,9 +1898,13 @@ def _selftest():
     real_mfn, real_venues = mfn_news, venues_se
     mfn_news, venues_se = FakeMFN, FakeVenuesSE
     try:
-        with_release = check_regulatory_news("Newsy AB", "2026-08-01", "2026-08-31")
-        without_release = check_regulatory_news("Quiet AB", "2026-08-01", "2026-08-31")
-        unresolvable = check_regulatory_news("Nobody AB", "2026-08-01", "2026-08-31")
+        with_release = check_regulatory_news("Newsy AB", "2026-08-01", "2026-08-31", "2026-08-31")
+        without_release = check_regulatory_news("Quiet AB", "2026-08-01", "2026-08-31", "2026-08-31")
+        unresolvable = check_regulatory_news("Nobody AB", "2026-08-01", "2026-08-31", "2026-08-31")
+        # -- last_close_date BEFORE date_to: a release published the morning
+        #    after the last completed close must NOT explain a fall already
+        #    measured to that close - the whole point of this fix. --------
+        morning_after = check_regulatory_news("Newsy AB", "2026-08-01", "2026-08-19", "2026-08-20")
     finally:
         mfn_news, venues_se = real_mfn, real_venues
     _assert(with_release["status"] == "checked" and with_release["has_release"] is True,
@@ -1777,7 +1913,12 @@ def _selftest():
             "an untagged release must not count as regulatory")
     _assert(unresolvable["status"] == "checked" and unresolvable["has_release"] is False,
             "no verified MFN identity must be 'checked, no release', with a caveat note")
-    n += 3
+    _assert(morning_after["has_release"] is False,
+            "a release AFTER last_close_date must never be read as explaining a fall "
+            "already measured to that close")
+    _assert(morning_after["since_last_close"]["count"] == 1,
+            "that same release must be flagged as news since the last close")
+    n += 5
 
     # -- class-suffixed names are stripped before resolving (B3) -------------
     _assert(_strip_class_suffix("Atlas Copco AB ser. A") == "Atlas Copco AB",
