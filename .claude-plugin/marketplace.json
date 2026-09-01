@@ -1,0 +1,19 @@
+{
+  "name": "finance-local",
+  "owner": {
+    "name": "Adam Haglund",
+    "email": "adam.haglund@ajprodukter.se"
+  },
+  "metadata": {
+    "description": "Private marketplace for investment research tooling.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "investment-analyst",
+      "source": "./plugins/investment-analyst",
+      "description": "Deep equity research on Swedish and US listed companies producing a sourced BUY/HOLD/SELL call.",
+      "category": "finance"
+    }
+  ]
+}
