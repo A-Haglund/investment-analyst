@@ -1,0 +1,3 @@
+# Normalise line endings in the repo to LF. A cloud agent clones this on
+# Linux; Windows checkouts convert on the way out.
+* text=auto

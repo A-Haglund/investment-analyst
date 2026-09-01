@@ -1,0 +1,18 @@
+# Local config backups. claude.json.bak carries account and session state and
+# must never leave this machine.
+_config-backup-*/
+
+# Working-tree snapshots taken before earlier releases. Git is the history now.
+_v*-backup-*/
+
+# Build output — the packaged plugin is regenerated from source.
+*.zip
+
+# Python
+__pycache__/
+*.pyc
+
+# Scratch downloads at the repo root.
+/gp_patent.html
+/pv.html
+/pv_dl.html
