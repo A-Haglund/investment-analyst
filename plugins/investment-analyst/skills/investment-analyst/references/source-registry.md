@@ -59,6 +59,7 @@ basis for market cap is not.
 | **Legal entity, orgnr** | EU VIES; ESMA FIRDS for ISIN↔LEI↔MIC | GLEIF | A name match alone |
 | **Company identity** | `company_resolve.py` — must reach sufficient confidence before analysis starts | — | Proceeding on an ambiguous name |
 | **Financial targets, guidance** | The company's own IR site and annual report | The MAR release body | Treating guidance as verified |
+| **Next scheduled report / calendar date** | The issuer's own "Finansiell kalender" page (`ir_discovery.py` locates it) | Avanza `companyEvents` (`horizon.py`) — **tier 4, SINGLE SOURCE**, an unofficial `_api` endpoint; a lead to verify, never a cited date | A guessed duration; a date without its source |
 | **Consensus estimates** | **None available free** | Reverse DCF as a *substitute question* | Calling a reverse DCF "consensus" |
 | **Earnings transcripts** | **None available free** | The report PDF and investor presentation | A third-party summary of a call |
 
