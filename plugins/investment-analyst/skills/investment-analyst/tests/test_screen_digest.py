@@ -567,28 +567,40 @@ class EndpointFailureDegradesToUnchecked(unittest.TestCase):
         real = sd.corporate_actions
         sd.corporate_actions = None
         try:
-            result = sd.check_corporate_actions("Any AB", "2026-08-01", "2026-08-31")
+            result = sd.check_corporate_actions("Any AB", "2026-08-01", "2026-08-25",
+                                                "2026-08-31")
         finally:
             sd.corporate_actions = real
         self.assertEqual(result["status"], "not checked")
+        self.assertEqual(result["since_last_close"]["status"], "not checked",
+                         "a failed check must report 'not checked' for BOTH windows, "
+                         "never silently imply 'no news'")
 
     def test_regulatory_news_check_degrades_when_sibling_missing(self):
         real = sd.mfn_news
         sd.mfn_news = None
         try:
-            result = sd.check_regulatory_news("Any AB", "2026-08-01", "2026-08-31")
+            result = sd.check_regulatory_news("Any AB", "2026-08-01", "2026-08-25",
+                                              "2026-08-31")
         finally:
             sd.mfn_news = real
         self.assertEqual(result["status"], "not checked")
+        self.assertEqual(result["since_last_close"]["status"], "not checked",
+                         "a failed check must report 'not checked' for BOTH windows, "
+                         "never silently imply 'no news'")
 
     def test_regulatory_news_check_degrades_when_venues_se_missing(self):
         real = sd.venues_se
         sd.venues_se = None
         try:
-            result = sd.check_regulatory_news("Any AB", "2026-08-01", "2026-08-31")
+            result = sd.check_regulatory_news("Any AB", "2026-08-01", "2026-08-25",
+                                              "2026-08-31")
         finally:
             sd.venues_se = real
         self.assertEqual(result["status"], "not checked")
+        self.assertEqual(result["since_last_close"]["status"], "not checked",
+                         "a failed check must report 'not checked' for BOTH windows, "
+                         "never silently imply 'no news'")
 
 
 class TimeBudgetBoundsCollectionNotJustSubmission(unittest.TestCase):
@@ -751,7 +763,8 @@ class CorporateActionAmbiguityRefusal(unittest.TestCase):
         real = sd.corporate_actions
         sd.corporate_actions = FakeCA
         try:
-            result = sd.check_corporate_actions("AstraZeneca PLC", "2026-08-01", "2026-08-31")
+            result = sd.check_corporate_actions("AstraZeneca PLC", "2026-08-01", "2026-08-31",
+                                                "2026-08-31")
         finally:
             sd.corporate_actions = real
         self.assertEqual(result["status"], "not checked")
@@ -780,7 +793,7 @@ class CorporateActionAmbiguityRefusal(unittest.TestCase):
         real = sd.corporate_actions
         sd.corporate_actions = FakeCA
         try:
-            result = sd.check_corporate_actions("Evolution", "2026-08-01", "2026-08-31")
+            result = sd.check_corporate_actions("Evolution", "2026-08-01", "2026-08-31", "2026-08-31")
         finally:
             sd.corporate_actions = real
         self.assertEqual(result["status"], "checked")
@@ -809,7 +822,7 @@ class CorporateActionAmbiguityRefusal(unittest.TestCase):
         real = sd.corporate_actions
         sd.corporate_actions = FakeCA
         try:
-            result = sd.check_corporate_actions("Sandvik AB", "2026-08-01", "2026-08-31")
+            result = sd.check_corporate_actions("Sandvik AB", "2026-08-01", "2026-08-31", "2026-08-31")
         finally:
             sd.corporate_actions = real
         self.assertEqual(result["status"], "checked")
@@ -846,7 +859,7 @@ class SplitEffectiveDateFix(unittest.TestCase):
         sd.corporate_actions = FakeCA
         try:
             result = sd.check_corporate_actions("Effective Split AB",
-                                                 "2026-08-01", "2026-08-31")
+                                                 "2026-08-01", "2026-08-31", "2026-08-31")
         finally:
             sd.corporate_actions = real
         self.assertTrue(result["has_breaking_action"])
@@ -881,7 +894,7 @@ class SplitEffectiveDateFix(unittest.TestCase):
         sd.corporate_actions = FakeCA
         try:
             result = sd.check_corporate_actions("Payer AB", "2026-08-01", "2026-08-31",
-                                                price=100.0)
+                                                "2026-08-31", price=100.0)
         finally:
             sd.corporate_actions = real
         self.assertTrue(result["has_breaking_action"])
@@ -926,7 +939,7 @@ class RegulatoryNewsIdentityVerification(unittest.TestCase):
         sd.mfn_news, sd.venues_se = FakeMFN, FakeVenuesSE
         try:
             result = sd.check_regulatory_news("Right Company", "2026-08-01", "2026-08-31",
-                                              isin="SE0000000101", lei=None)
+                                              "2026-08-31", isin="SE0000000101", lei=None)
         finally:
             sd.mfn_news, sd.venues_se = real_mfn, real_venues
         self.assertEqual(result["status"], "checked")
@@ -942,7 +955,7 @@ class RegulatoryNewsIdentityVerification(unittest.TestCase):
         sd.venues_se = FakeVenuesSE
         try:
             result = sd.check_regulatory_news("Wrongly Searched AB",
-                                              "2026-08-01", "2026-08-31",
+                                              "2026-08-01", "2026-08-31", "2026-08-31",
                                               isin="SE0000000999", lei=None)
         finally:
             sd.venues_se = real_venues
@@ -1063,23 +1076,40 @@ class FullPipelineRoutesCandidatesCorrectly(unittest.TestCase):
                     obid, {"status": "not checked", "reason": "no fixture"})
             return out
 
-        def fake_check_corporate_action(name, date_from, date_to, price=None):
+        def fake_check_corporate_action(name, date_from, last_close_date, date_to, price=None):
             if name == "Splitty AB":
                 return {"status": "checked", "has_breaking_action": True,
                         "events": [{"date": "2026-08-15", "type": "SPLIT",
-                                   "title": "Splitty AB: 10:1 split"}]}
-            return {"status": "checked", "has_breaking_action": False, "events": []}
+                                   "title": "Splitty AB: 10:1 split"}],
+                        "since_last_close": {"status": "checked", "count": 0, "events": [],
+                                             "window": [last_close_date, date_to]}}
+            return {"status": "checked", "has_breaking_action": False, "events": [],
+                    "since_last_close": {"status": "checked", "count": 0, "events": [],
+                                        "window": [last_close_date, date_to]}}
 
-        def fake_check_regulatory_news(name, date_from, date_to, isin=None, lei=None):
+        def fake_check_regulatory_news(name, date_from, last_close_date, date_to,
+                                       isin=None, lei=None):
             if name == "Newsy AB":
+                # Deliberately carries BOTH: an older release that explains
+                # the fall (well before last_close_date) AND a fresh one
+                # published the morning after last close, not yet priced -
+                # exercises the "candidate with both" case end to end.
                 return {"status": "checked", "has_release": True,
-                        "window": [date_from, date_to],
-                        "items": [{"date": "2026-08-20", "title": "Profit warning"}]}
+                        "window": [date_from, last_close_date],
+                        "items": [{"date": "2026-08-20", "title": "Profit warning"}],
+                        "since_last_close": {
+                            "status": "checked", "count": 1,
+                            "window": [last_close_date, date_to],
+                            "items": [{"date": "2026-08-30T07:15:00",
+                                      "title": "Trading update"}]}}
             if name == "Unresolvable AB":
-                return {"status": "not checked",
-                        "reason": "MFN identity resolution failed: simulated outage"}
+                reason = "MFN identity resolution failed: simulated outage"
+                return {"status": "not checked", "reason": reason,
+                        "since_last_close": {"status": "not checked", "reason": reason}}
             return {"status": "checked", "has_release": False,
-                    "window": [date_from, date_to], "items": []}
+                    "window": [date_from, last_close_date], "items": [],
+                    "since_last_close": {"status": "checked", "count": 0, "items": [],
+                                        "window": [last_close_date, date_to]}}
 
         def fake_load_short_data():
             company = {"lei": "LEI-NEWS", "display": "Newsy AB", "names": ["newsy ab"],
@@ -1176,7 +1206,55 @@ class FullPipelineRoutesCandidatesCorrectly(unittest.TestCase):
         self.assertNotEqual(price_as_of, short_as_of,
                             "price and short-interest as-of dates must not be "
                             "collapsed into one headline date")
-        self.assertEqual(window, [self.result["window_from"], self.result["window_to"]])
+        # The "explains the fall" window is bounded by the candidate's OWN
+        # last completed close (its returns "as_of", 2026-08-28) - NOT by
+        # today (result["window_to"], 2026-08-31). Collapsing it to
+        # window_to is exactly the defect this fix corrects: it would let a
+        # release published this morning (after the last close, before
+        # today) count as having explained a fall already measured to
+        # yesterday's close, which is causally impossible.
+        self.assertEqual(window, [self.result["window_from"], price_as_of])
+        self.assertNotEqual(window[1], self.result["window_to"],
+                            "the explains-the-fall window must never be collapsed "
+                            "onto today's date")
+
+    def test_fresh_news_since_last_close_is_marked_without_moving_the_bucket(self):
+        """The central fix: Newsy AB carries an older release (2026-08-20,
+        well before its 2026-08-28 last close) that explains the fall, AND a
+        fresh one (2026-08-30, after that close) that does not. The
+        candidate must stay in fell_on_information (unchanged bucket -
+        regression guard) while ALSO being flagged, in the summary count,
+        the per-candidate text marker, and the JSON payload, as carrying
+        news since the last close."""
+        self.assertIn("Newsy AB", self._names_in("fell_on_information"))
+        self.assertIn("Newsy AB", self.result["since_last_close_news_names"])
+        self.assertGreaterEqual(self.result["since_last_close_news_total"], 1)
+
+        newsy = next(c for c in self.result["fell_on_information"]
+                    if c["name"] == "Newsy AB")
+        since = newsy["regulatory_news"]["since_last_close"]
+        self.assertEqual(since["status"], "checked")
+        self.assertEqual(since["count"], 1)
+        self.assertEqual(since["items"][0]["title"], "Trading update")
+
+        text = sd._line_for(newsy, self.result["window"])
+        self.assertIn("NEWS SINCE LAST CLOSE", text)
+        self.assertIn("Trading update", text)
+
+        safe = sd._json_safe(self.result)
+        newsy_json = next(c for c in safe["fell_on_information"] if c["name"] == "Newsy AB")
+        self.assertEqual(newsy_json["regulatory_news"]["since_last_close"]["count"], 1)
+
+    def test_summary_line_names_candidates_with_fresh_news(self):
+        import io
+        import contextlib
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            sd.print_text(self.result)
+        out = buf.getvalue()
+        self.assertIn("Newsy AB", out)
+        self.assertRegex(out, r"\d+ candidate\(s\) have regulatory news published SINCE "
+                              r"their last completed close")
 
     def test_data_confidence_flags_regulated_market(self):
         newsy = next(c for c in self.result["fell_on_information"]
@@ -1236,12 +1314,17 @@ class FullPipelineReconcilesWithIncludeIlliquid(unittest.TestCase):
         def fake_fetch_returns_parallel(instruments, as_of_date, budget, max_workers=10):
             return {r["orderbookId"]: returns_by_obid.get(r["orderbookId"]) for r in instruments}
 
-        def fake_check_corporate_action(name, date_from, date_to, price=None):
-            return {"status": "checked", "has_breaking_action": False, "events": []}
+        def fake_check_corporate_action(name, date_from, last_close_date, date_to, price=None):
+            return {"status": "checked", "has_breaking_action": False, "events": [],
+                    "since_last_close": {"status": "checked", "count": 0, "events": [],
+                                        "window": [last_close_date, date_to]}}
 
-        def fake_check_regulatory_news(name, date_from, date_to, isin=None, lei=None):
+        def fake_check_regulatory_news(name, date_from, last_close_date, date_to,
+                                       isin=None, lei=None):
             return {"status": "checked", "has_release": False,
-                    "window": [date_from, date_to], "items": []}
+                    "window": [date_from, last_close_date], "items": [],
+                    "since_last_close": {"status": "checked", "count": 0, "items": [],
+                                        "window": [last_close_date, date_to]}}
 
         def fake_load_short_data():
             return {"companies_by_lei": {}, "companies_by_isin": {}, "rows": []}, None

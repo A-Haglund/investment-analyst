@@ -81,7 +81,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # SEC's fair-access policy requires a descriptive User-Agent. sec_fundamentals
 # reads this from the environment AT IMPORT TIME, so it must be set before the
 # module is loaded below. Same convention sec_fundamentals.py itself suggests.
-os.environ.setdefault("SEC_USER_AGENT", "Adam Haglund adam.haglund@ajprodukter.se")
+# SEC fair-access requires a real contact address on every request. Prefer
+# setting SEC_USER_AGENT in the environment; this fallback exists so an
+# unattended run does not die on a missing variable, but an identity baked
+# into a shared repository is a smell - it makes every clone speak as one
+# person to a regulator.
+os.environ.setdefault("SEC_USER_AGENT", "Adam Haglund haglund.adam@icloud.com")
 
 UA = "Mozilla/5.0 (compatible; investment-analyst-skill/1.0)"
 

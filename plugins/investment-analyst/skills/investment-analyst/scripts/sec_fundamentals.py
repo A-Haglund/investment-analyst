@@ -122,7 +122,7 @@ def _date(s):
 def get(url, tries=4):
     if not UA:
         sys.exit('ERROR: set SEC_USER_AGENT first, e.g.\n'
-                 '  export SEC_USER_AGENT="Adam Haglund adam.haglund@ajprodukter.se"')
+                 '  export SEC_USER_AGENT="Adam Haglund haglund.adam@icloud.com"')
     req = urllib.request.Request(
         url, headers={"User-Agent": UA, "Accept-Encoding": "gzip, deflate"})
     for attempt in range(tries):
