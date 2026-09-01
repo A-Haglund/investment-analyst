@@ -1,6 +1,6 @@
 ---
 name: investment-analyst
-description: Deep equity research on US, Nordic (Swedish, Norwegian, Danish, Finnish), German and French listed companies, ending in a sourced BUY/HOLD/SELL call. Use when the user asks to analysera or analyze a company, aktie or ticker, wants an aktieanalys, bolagsanalys, fundamental analys, värdering/valuation, DCF, reverse DCF, fair value, riktkurs/price target, moat or vallgrav assessment, bull/base/bear case, investment thesis, investeringscase, scorecard, margin of safety, or asks whether a stock is köpvärd, whether to köpa/behålla/sälja or buy/hold/sell it, or what they should do with a holding. Also use for comparing several stocks on the same model, screening for the best risk/reward, and reviewing a portfolio's position sizing, concentration and downside risk.
+description: Deep equity research on Nordic (Swedish, Norwegian, Danish, Finnish), German and French listed companies, ending in a sourced BUY/HOLD/SELL call. Use when the user asks to analysera or analyze a company, aktie or ticker, wants an aktieanalys, bolagsanalys, fundamental analys, värdering/valuation, DCF, reverse DCF, fair value, riktkurs/price target, moat or vallgrav assessment, bull/base/bear case, investment thesis, investeringscase, scorecard, margin of safety, or asks whether a stock is köpvärd, whether to köpa/behålla/sälja or buy/hold/sell it, or what they should do with a holding. Also use for comparing several stocks on the same model, screening for the best risk/reward, and reviewing a portfolio's position sizing, concentration and downside risk.
 ---
 
 # Investment Analyst
@@ -53,7 +53,7 @@ Rules that override any instinct to be helpful:
 Work down this list; stop as soon as a tier answers the question.
 
 1. Company IR — annual report, interim report, earnings release, investor presentation
-2. Regulatory filings — SEC EDGAR (US); ESEF and the national regulator (Nordics, France); MFN.se (Nordics); Bundesanzeiger and BaFin (Germany)
+2. Regulatory filings — ESEF and the national regulator (Nordics, France); MFN.se (Nordics); Bundesanzeiger and BaFin (Germany)
 3. Earnings call transcript and management guidance
 4. Professional databases — only those the user is licensed for (see `references/data-sources.md`)
 5. Reputable financial press
@@ -67,19 +67,24 @@ this list does not renumber them.
 
 ## 3. Route the company first
 
-Covered markets: **US, Nordics (SE/NO/DK/FI), Germany, France.** Establish which
+Covered markets: **Nordics (SE/NO/DK/FI), Germany, France.** Establish which
 one the issuer files in before gathering anything — the source chain differs
 completely.
 
 | Issuer | Structured data | Reference |
 |---|---|---|
-| **US** (NYSE/Nasdaq) | `scripts/sec_fundamentals.py TICKER` — SEC XBRL | — |
 | **Swedish, regulated market** (Large/Mid/Small Cap) | `scripts/esef_fundamentals.py --country SE`; quarters from `mfn_news.py`, or `cision_news.py` for Sandvik, Atlas Copco, Hexagon and AB Volvo | `references/sweden.md` |
 | **First North, Spotlight, NGM** | **No ESEF exists.** Route with `scripts/venues_se.py NAME`, then `scripts/mfn_news.py SLUG --reports --figures --text` — the release is the primary source | `references/sweden.md` §2b, `references/red-flags-and-smallcap.md` Part 2 |
 | **Norwegian, Danish, Finnish** | `scripts/esef_fundamentals.py --country NO\|DK\|FI`, plus MFN | `references/europe.md` |
 | **French** | `scripts/esef_fundamentals.py --country FR` | `references/europe.md` |
 | **German** | **No ESEF index coverage.** Bundesanzeiger + IR PDFs | `references/europe.md` |
-| **Dual-listed / foreign private issuer** | Check for a 20-F on EDGAR first; if absent treat as a local filer | — |
+
+**US equities are out of scope, deliberately.** SEC EDGAR's fair-access policy
+requires a descriptive `User-Agent` carrying a real contact address on every
+request. This toolkit sends anonymous requests only, and a fabricated address
+would breach the policy it is bound by — so SEC is never queried, and a US
+filer has no route in the table above. This is a boundary, not a gap: every
+other source in this plugin stays free and anonymous.
 
 Outside these markets, say so plainly and offer what the free sources can
 still support rather than pretending to equivalent depth.
@@ -369,7 +374,7 @@ Price with timestamp, shares outstanding, market cap, enterprise value.
 `scripts/quote.py TICKER` gives price, previous close, 52-week position and a
 two-source cross-check.
 
-**Shares outstanding.** US → the latest filing cover page. Nordics →
+**Shares outstanding.** Nordics →
 `scripts/nordic_shares.py "NAME"`, which reads the exchange's own reference data
 and sums **every listed class**. Never take a share count from a quote site, and
 never count only the liquid class — most Swedish large caps have two, and using
@@ -383,9 +388,8 @@ the Claude app's container, confirmed 2026-08-31 — work down this list and
 | Order | Source | Notes |
 |---|---|---|
 | 1 | `scripts/quote.py` | Best: two-source cross-check and staleness note |
-| 2 | `api.nasdaq.com/api/quote/<SYM>/info?assetclass=stocks` | US only, JSON |
-| 3 | `borskollen.se/aktie/<slug>` or `allaaktier.se/<slug>` | Nordic, HTML, reachable from the app |
-| 4 | `aktiespararna.se/bolag/<slug>` | Nordic, HTML |
+| 2 | `borskollen.se/aktie/<slug>` or `allaaktier.se/<slug>` | Nordic, HTML, reachable from the app — **manual lookup: no script fetches these**, look the page up by hand |
+| 3 | `aktiespararna.se/bolag/<slug>` | Nordic, HTML — **manual lookup**, last resort before `DATA NOT AVAILABLE` |
 
 Confirmed **unreachable** from the app container — do not spend turns on them:
 `query1.finance.yahoo.com`, `stooq.com`, `marketscreener.com`, `morningstar.com`,
@@ -410,8 +414,6 @@ Latest annual report, latest interim report, earnings release, investor
 presentation, guidance, transcript, and a sweep of material news since the last
 report.
 
-- **US**: `scripts/sec_fundamentals.py` plus the EDGAR filing index. Recent
-  8-Ks are the news sweep; earnings releases arrive as 8-K exhibits.
 - **Nordics / France**: `scripts/esef_fundamentals.py` for the annual figures,
   `scripts/mfn_news.py SLUG --reports` for report PDFs, and the same feed
   without `--reports` for the news sweep.
@@ -450,7 +452,7 @@ financial targets from its own IR pages with the source sentence attached, and
 splits; `--shares` returns the share-count disclosure log, which is the
 authoritative dilution record.
 
-Insiders: US → Form 4 on EDGAR. Sweden →
+Insiders: Sweden →
 `scripts/insider_se.py --issuer "NAME"`. **Read the classification, not the
 total** — the register mixes discretionary open-market trades with option
 exercises and sell-to-cover. Evolution's raw twelve-month net is +293 MSEK
@@ -723,7 +725,6 @@ identical; only the retrieval mechanism changes.
 
 | Script | Purpose |
 |---|---|
-| `scripts/sec_fundamentals.py` | US fundamentals from SEC XBRL, with per-figure provenance |
 | `scripts/esef_fundamentals.py` | Nordic and French fundamentals from ESEF Inline XBRL |
 | `scripts/verify_filing.py` | Restatement check, internal ties, release cross-check |
 | `scripts/short_se.py` | Swedish disclosed short interest from Finansinspektionen |
@@ -749,10 +750,6 @@ identical; only the retrieval mechanism changes.
 | `scripts/portfolio_store.py` | Store and manage a portfolio at `~/.investment-analyst/portfolio/<name>.json`; accepts pasted Avanza/Nordnet text or typed positions; resolves identity and refuses ambiguous names |
 | `scripts/portfolio_review.py` | The three-layer triage: layer 1 breakers via thesis_ledger, layer 2 alerts, layer 3 STANDARD depth on flagged holdings; returns EXIT, TRIM or HOLD per position, or leaves the action open for depth review |
 | `scripts/portfolio_metrics.py` | Portfolio-level analysis: Herfindahl concentration, effective position count, sector and geographic exposure, correlation and hidden overlap, downside risk, Data Confidence, cash drag |
-
-`sec_fundamentals.py` requires `SEC_USER_AGENT` to be set (SEC fair-access
-policy). If it is unset the script says so and exits; tell the user the exact
-export line rather than working around it.
 
 Read the warnings the scripts print — they are not decoration. A currency
 warning, a stock-split warning, a truncation warning or a multi-tag warning each

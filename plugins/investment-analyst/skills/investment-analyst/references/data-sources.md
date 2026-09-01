@@ -6,29 +6,12 @@ and continue with the free tier.
 
 ## Free, no credentials — the working base
 
-### SEC EDGAR (US filers)
-
-No API key. SEC's fair-access policy requires a descriptive `User-Agent`
-containing a real contact address, and rate-limits to ~10 requests/second.
-
-| Endpoint | Returns |
-|---|---|
-| `https://www.sec.gov/files/company_tickers.json` | ticker → CIK for every filer |
-| `https://data.sec.gov/submissions/CIK##########.json` | every filing, newest first |
-| `https://data.sec.gov/api/xbrl/companyfacts/CIK##########.json` | full tagged financial history |
-| `https://data.sec.gov/api/xbrl/companyconcept/CIK##########/us-gaap/TAG.json` | one concept's history |
-| `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=...&type=4` | insider Form 4 filings |
-
-CIK must be zero-padded to 10 digits in `data.sec.gov` paths.
-
-Forms that matter: **10-K** annual, **10-Q** quarterly, **8-K** material events
-and earnings releases, **DEF 14A** proxy (compensation, insider ownership),
-**Form 4** insider transactions, **13F-HR** institutional holdings, **20-F**
-foreign private issuers, **S-1** IPOs.
-
-Beware: filers switch XBRL tags mid-history. Never rely on a single tag for a
-concept — `scripts/sec_fundamentals.py` merges a prioritised fallback list per
-metric for exactly this reason.
+**SEC EDGAR (US filers) is not used.** SEC's fair-access policy requires a
+descriptive `User-Agent` carrying a real contact address on every request.
+This toolkit sends anonymous requests only, and a fabricated address would
+breach that policy — so US filers have no source chain here at all. See
+`SKILL.md` §3 for the reasoning; this is a deliberate boundary, not a gap in
+this file.
 
 ### Finansinspektionen — Insynsregistret (Swedish insiders)
 
@@ -277,37 +260,27 @@ and beta ASSUMPTIONs (`--erp`, `--beta`) a DCF still has to supply. `--curve`
 gives the full SEK yield curve; `--peers` adds the foreign 10-year benchmarks
 Riksbanken itself republishes, for a spread read on the same convention.
 
-### US Treasury and ECB — USD and EUR risk-free rates
+### ECB — the EUR risk-free rate
 
 `references/valuation.md` requires a 10-year yield in the cash flows' own
-currency. The two legs are not in the same state.
+currency. The SEK leg is Riksbanken, above. The EUR leg is **scripted and
+working**: `scripts/macro_se.py --euro` reads the ECB Data Portal
+(`data-api.ecb.europa.eu/service/data`, dataflow `YC`, key
+`B.U2.EUR.4F.G_N_A.SV_C_YM.SR_10Y` for the 10-year point; the trailing code
+varies by tenor, `SR_3M` through `SR_30Y`). This is the **AAA-rated
+euro-area sovereign spot curve** — a Bund proxy, not a blend of every euro
+member. For a French issuer this is **not** the OAT that
+`references/valuation.md` calls "the relevant sovereign": France is not in
+the AAA sub-sample the ECB curve is built from, so the ECB figure there is a
+proxy and the OAT itself would need its own (currently unverified) fetch.
 
-- **EUR — scripted and working.** `scripts/macro_se.py --euro` reads the ECB
-  Data Portal (`data-api.ecb.europa.eu/service/data`, dataflow `YC`, key
-  `B.U2.EUR.4F.G_N_A.SV_C_YM.SR_10Y` for the 10-year point; the trailing code
-  varies by tenor, `SR_3M` through `SR_30Y`). This is the **AAA-rated
-  euro-area sovereign spot curve** — a Bund proxy, not a blend of every euro
-  member. For a French issuer this is **not** the OAT that
-  `references/valuation.md` calls "the relevant sovereign": France is not in
-  the AAA sub-sample the ECB curve is built from, so the ECB figure there is a
-  proxy and the OAT itself would need its own (currently unverified) fetch.
-- **USD — still unscripted.** No free, keyless endpoint for the daily par
-  yield curve has been verified yet. The U.S. Department of the Treasury
-  publishes it itself via treasury.gov and fiscaldata.treasury.gov; the exact
-  dataset and query remain **unverified** — confirm the endpoint before a
-  script reads it. A remembered or assumed rate is forbidden, so until this is
-  verified: fetch the Treasury's published curve at analysis time by hand and
-  cite it with its observation date, or mark the discount rate `ASSUMPTION`
-  with the source named, per `references/valuation.md`.
-
-FRED is deliberately not used for either leg — see "Not configured" below.
+FRED is deliberately not used for this leg — see "Not configured" below.
 
 ### Market prices
 
 | Source | Coverage | Notes |
 |---|---|---|
-| `https://api.nasdaq.com/api/quote/<SYM>/info?assetclass=stocks` | US listings | Free, no key, needs a browser `User-Agent` |
-| `https://query1.finance.yahoo.com/v8/finance/chart/<SYM>?range=1mo&interval=1d` | US + Nasdaq Stockholm (`.ST`) | Unofficial, unsupported, and **confirmed unreachable from the app container on 2026-08-31** — documented for completeness only, not currently usable |
+| `https://query1.finance.yahoo.com/v8/finance/chart/<SYM>?range=1mo&interval=1d` | Nasdaq Stockholm (`.ST`) | Unofficial, unsupported, and **confirmed unreachable from the app container on 2026-08-31** — documented for completeness only, not currently usable |
 
 Swedish tickers use the `.ST` suffix with a hyphen for share classes:
 `VOLV-B.ST`, `INVE-B.ST`, `ATCO-A.ST`, `ERIC-B.ST`, `EVO.ST`, `SAND.ST`.
@@ -316,11 +289,11 @@ Swedish tickers use the `.ST` suffix with a hyphen for share classes:
 yesterday's close. Take the prior session off the close series instead —
 `scripts/quote.py` already does this.
 
-Yahoo being unreachable means no second US price feed is currently reachable
-from this container. A US price from `api.nasdaq.com` is `SINGLE SOURCE` —
-record it as such rather than implying a cross-check was run. For Nordic
-tickers, `SKILL.md`'s price-fallback order (`borskollen.se`, `allaaktier.se`,
-`aktiespararna.se`) is the working alternative when `quote.py` fails; see
+Yahoo being unreachable means no second Nordic price feed beyond `quote.py`'s
+own cross-check is currently reachable from this container. `SKILL.md`'s
+price-fallback order (`borskollen.se`, `allaaktier.se`, `aktiespararna.se`)
+is a **manual lookup** for when `quote.py` fails — a human or the model reads
+the page by hand, since no script fetches these hosts — see
 `references/source-registry.md`'s tier-4 table.
 
 ## Needs credentials — document, never circumvent
@@ -356,10 +329,7 @@ licence. In their absence:
 
 1. **Company IR page** — many issuers publish a webcast replay and, increasingly,
    a transcript PDF. Check first; it is a primary source.
-2. **US** — the earnings release arrives as an **8-K exhibit** on EDGAR and
-   carries the prepared remarks' substance. Guidance history for the
-   guidance-accuracy analysis lives in those 8-Ks.
-3. **Nordics** — the interim report PDF and the accompanying investor
+2. **Nordics** — the interim report PDF and the accompanying investor
    presentation on MFN carry the same guidance content.
 
 If none of these yields what a transcript would, write `DATA NOT AVAILABLE` for

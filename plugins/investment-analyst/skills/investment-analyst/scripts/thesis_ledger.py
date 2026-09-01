@@ -16,10 +16,10 @@ Four things are enforced here rather than requested (spec SS13, SS14):
      is an opinion. It is rejected with the reason, not stored. "Sandvik is a
      quality compounder" cannot be wrong, so it cannot be right either.
 
-  2. IDENTITY, NOT NAME. The ledger is keyed on LEI (or ISIN, or SEC CIK for a
-     US filer) resolved through company_resolve.py. "Volvo" is two listed
-     companies with different accounts; a ledger keyed on a display name merges
-     them silently. Display names are recorded as aliases only.
+  2. IDENTITY, NOT NAME. The ledger is keyed on LEI (or ISIN) resolved through
+     company_resolve.py. "Volvo" is two listed companies with different
+     accounts; a ledger keyed on a display name merges them silently. Display
+     names are recorded as aliases only.
 
   3. SILENCE IS NOT CONFIRMATION. A thesis whose evidence cannot be re-fetched
      is UNKNOWN, never STABLE. Likewise a quarterly persistence requirement
@@ -39,8 +39,8 @@ fact the world could not have known on that date.
 STORAGE
     One JSON file per company under the user's home directory:
 
-        ~/.investment-analyst/thesis-ledger/<KEY>.json      (KEY = LEI-xxx,
-                                                             ISIN-xxx or CIK-xxx)
+        ~/.investment-analyst/thesis-ledger/<KEY>.json      (KEY = LEI-xxx or
+                                                             ISIN-xxx)
         ~/.investment-analyst/thesis-ledger/index.json      (alias -> key map)
 
     Created lazily on first write, survives between runs, one file per issuer,
@@ -230,7 +230,7 @@ def today():
 # Split three ways on purpose, because the honest answer to "can the ledger
 # re-test this by itself?" is different for each:
 #
-#   REPORTED  a line item tagged in ESEF / SEC XBRL. Machine-readable.
+#   REPORTED  a line item tagged in ESEF. Machine-readable.
 #   DERIVED   arithmetic over reported line items. Machine-readable, but only
 #             where every input is actually tagged - ESEF Phase 1 mandates the
 #             primary statements only, so D&A and non-current borrowings are
@@ -374,7 +374,7 @@ _reg(
     # -- manual: no free machine-readable source exists ------------------
     MetricDef("organic_revenue_growth", "Organic revenue growth", PERCENT,
               manual_reason="Management-defined (excludes FX and structure). Never "
-                            "tagged in ESEF or SEC XBRL. Read it from the interim "
+                            "tagged in ESEF. Read it from the interim "
                             "report and enter it with --observe."),
     MetricDef("order_intake", "Order intake", MONEY,
               manual_reason="Disclosed in the report text, not in the tagged primary "
@@ -484,20 +484,6 @@ ESEF_TO_RAW = {
     "dividends_paid": "dividends_paid", "tax": "tax", "pretax_income": "pretax_income",
     "goodwill": "goodwill", "intangibles": "intangibles", "cost_of_sales": "cogs",
 }
-
-SEC_TO_RAW = {
-    "revenue": "revenue", "operating_income": "ebit", "net_income": "net_income",
-    "gross_profit": "gross_profit", "equity": "equity", "total_assets": "total_assets",
-    "total_liabilities": "total_liabilities", "cash": "cash", "cfo": "cfo",
-    "capex": "capex", "depreciation_amort": "dnda",
-    "interest_expense": "interest_expense", "lt_debt": "debt_lt", "st_debt": "debt_st",
-    "current_assets": "current_assets", "current_liabilities": "current_liabilities",
-    "inventory": "inventory", "receivables": "receivables", "payables": "payables",
-    "eps_diluted": "eps_diluted", "eps_basic": "eps_basic",
-    "dividends": "dividends_paid", "tax": "tax", "pretax_income": "pretax_income",
-    "goodwill": "goodwill", "intangibles": "intangibles", "cogs": "cogs",
-}
-
 
 # --------------------------------------------------------------------------
 # Breaker parsing (spec SS14)
@@ -803,7 +789,6 @@ def falsifiability_report(text, metrics, breakers):
 
 LEI_RE = re.compile(r"^[A-Z0-9]{18}[0-9]{2}$")
 ISIN_RE = re.compile(r"^[A-Z]{2}[A-Z0-9]{9}[0-9]$")
-CIK_RE = re.compile(r"^\d{6,10}$")
 
 
 class Ambiguous(Exception):
@@ -814,18 +799,12 @@ class Ambiguous(Exception):
 
 
 def ledger_key(identity):
-    """LEI first, ISIN second, SEC CIK last. Never the name.
-
-    CIK is admitted only because a US filer's companyfacts record carries no
-    LEI or ISIN; it is still a registry identifier, not a brand.
-    """
+    """LEI first, ISIN second. Never the name."""
     if identity.get("lei") and identity["lei"] != NA:
         return "LEI-" + identity["lei"]
     if identity.get("isin") and identity["isin"] != NA:
         return "ISIN-" + identity["isin"]
-    if identity.get("cik") and identity["cik"] != NA:
-        return "CIK-" + str(identity["cik"]).zfill(10)
-    raise Ambiguous("no LEI, ISIN or CIK could be established, so this company "
+    raise Ambiguous("no LEI or ISIN could be established, so this company "
                     "cannot be keyed. A ledger keyed on a display name is a "
                     "ledger that will merge two issuers.", [])
 
@@ -861,7 +840,7 @@ def _index_entry(led):
             "company_name": ident.get("company_name"),
             "legal_name": ident.get("legal_name"),
             "ticker": ident.get("ticker"), "lei": ident.get("lei"),
-            "isin": ident.get("isin"), "cik": ident.get("cik"),
+            "isin": ident.get("isin"),
             "aliases": led.get("aliases", []),
             "theses": len([t for t in led.get("theses", []) if t.get("active", True)]),
             "last_updated": led.get("last_updated"),
@@ -880,7 +859,7 @@ def index_lookup(query):
     for key, entry in idx["companies"].items():
         if squash(key) == q:
             return key
-        for field in ("lei", "isin", "cik", "ticker"):
+        for field in ("lei", "isin", "ticker"):
             if entry.get(field) and squash(str(entry[field])) == q:
                 return key
         for alias in entry.get("aliases", []):
@@ -929,12 +908,11 @@ def resolve_identity(query, country=None, offline=False, refresh=False):
     ident = _identity_via_esef_index(raw, country)
     if ident:
         return ident
-    ident = _identity_via_sec(raw)
-    if ident:
-        return ident
-    raise Ambiguous("no issuer could be resolved for %r. company_resolve.py, "
-                    "the ESEF filing index and SEC company_tickers.json were all "
-                    "checked." % raw, [])
+    raise Ambiguous("%s: no issuer could be resolved for %r. company_resolve.py "
+                    "and the ESEF filing index were both checked. This toolkit "
+                    "covers European (Nordic/French ESEF) issuers only - a US "
+                    "ticker or CIK is out of scope, not merely unresolved."
+                    % (NA, raw), [])
 
 
 def _identity_via_company_resolve(query, country, offline, refresh):
@@ -1069,25 +1047,6 @@ def _identity_via_esef_index(query, country):
             "identity_warnings": ["Identity came from the ESEF index alone. "
                                   "Ticker, ISIN and share classes were NOT "
                                   "cross-checked."]}
-
-
-def _identity_via_sec(query):
-    if not re.match(r"^[A-Za-z.\-]{1,6}$", query.strip()) and not CIK_RE.match(query.strip()):
-        return None
-    try:
-        sec = lazy("sec_fundamentals")
-        cik, name = sec.resolve(query.strip())
-    except SystemExit:
-        return None
-    except Exception:                                 # noqa: BLE001
-        return None
-    return {"lei": NA, "isin": NA, "cik": cik, "company_name": name or query.upper(),
-            "legal_name": name or NA, "ticker": query.upper(), "country": "US",
-            "reporting_currency": NA, "fiscal_year_end": NA,
-            "identity_source": "SEC company_tickers.json",
-            "identity_confidence": 0.85,
-            "identity_warnings": ["Keyed on SEC CIK: a US filer's companyfacts "
-                                  "record carries no LEI or ISIN."]}
 
 
 # --------------------------------------------------------------------------
@@ -1234,40 +1193,6 @@ def fetch_esef(lei, filings=5, offline=False):
     return cached("esef:%s:%d" % (lei, filings), FUNDAMENTALS_TTL, produce, offline=offline)
 
 
-def fetch_sec(cik, years=6, quarterly=False, offline=False):
-    def produce():
-        sec = lazy("sec_fundamentals")
-        try:
-            facts = sec.get("%s/api/xbrl/companyfacts/CIK%s.json" % (sec.BASE, cik))
-        except (SystemExit, Exception):               # noqa: BLE001
-            return None
-        annual = not quarterly
-        span = years if annual else years * 4
-        data = {}
-        for metric, tags in sec.CONCEPTS.items():
-            if not annual and metric not in sec.FLOW:
-                found = sec.series(facts, tags, annual=False) or sec.series(facts, tags, annual=True)
-            else:
-                found = sec.series(facts, tags, annual=annual)
-            if not found:
-                continue
-            for period in sorted(found)[-span:]:
-                row = found[period]
-                data.setdefault(metric, {})[period] = [
-                    {"val": row["val"], "unit": row.get("unit"),
-                     "concept": row.get("tag"),
-                     "filing": "%s %s" % (row.get("form"), row.get("accn")),
-                     "filing_date": row.get("filed")}]
-        if not data:
-            return None
-        return {"basis": "quarterly" if quarterly else "annual", "source": "sec_xbrl",
-                "currency": None, "entity": facts.get("entityName"),
-                "filings": [], "data": data, "retrieved": now_iso()}
-
-    return cached("sec:%s:%d:%s" % (cik, years, quarterly), FUNDAMENTALS_TTL,
-                  produce, offline=offline)
-
-
 # Plain-English names for the normalised raw line items, so "missing debt_lt"
 # becomes something an analyst can act on.
 RAW_LABEL = {
@@ -1297,7 +1222,7 @@ def raw_label(key):
 def _grade(rows, source, period, fkey):
     """Verification for one metric-period that several filings report.
 
-    Graded by finfact.corroborate, not by counting sources: every ESEF/SEC
+    Graded by finfact.corroborate, not by counting sources: every ESEF
     filing shares origin_group 'issuer_filing', so the best available grade is
     CROSS-CHECKED. An issuer restating its own comparative is not independent
     confirmation of anything.
@@ -1334,15 +1259,14 @@ def _grade(rows, source, period, fkey):
 
 
 def raw_facts(bundle, currency):
-    """{raw_key: {period_end: FinancialFact}} from a fetched bundle."""
+    """{raw_key: {period_end: FinancialFact}} from a fetched ESEF bundle."""
     if not bundle:
         return {}, "annual"
-    mapping = ESEF_TO_RAW if bundle["source"] == "esef" else SEC_TO_RAW
-    source = "esef" if bundle["source"] == "esef" else "sec_xbrl"
+    source = "esef"
     fkey = FRESHNESS.get(bundle.get("basis"), "annual_financials")
     out = {}
     for native, periods in bundle["data"].items():
-        raw_key = mapping.get(native)
+        raw_key = ESEF_TO_RAW.get(native)
         if not raw_key:
             continue
         for period, rows in periods.items():
@@ -1356,8 +1280,6 @@ def raw_facts(bundle, currency):
                 cur = unit.split(":", 1)[1]
             elif unit == "USD":
                 cur = "USD"
-            elif bundle["source"] == "sec_xbrl" and unit and "/" not in unit and unit != "shares":
-                cur = unit
             kind = "currency" if cur else ("per_share" if "/" in unit or "eps" in native
                                            else "pure")
             try:
@@ -1367,7 +1289,7 @@ def raw_facts(bundle, currency):
                     publication_date=best.get("filing_date"),
                     source_detail="%s / %s" % (best.get("concept"), best.get("filing")),
                     verification=verification, note=note, freshness_key=fkey,
-                    publication_is_upper_bound=(source == "esef"))
+                    publication_is_upper_bound=True)
             except ValueError:
                 continue
             prev = out.setdefault(raw_key, {}).get(period)
@@ -1553,12 +1475,6 @@ class DataContext(object):
                     "(filings.xbrl.org unreachable, or the issuer files "
                     "outside its coverage - Germany and Ireland are not "
                     "harvested)." % ident["lei"])
-        if bundle is None and ident.get("cik") and ident["cik"] != NA:
-            bundle = fetch_sec(ident["cik"], offline=self.offline)
-            if bundle is None:
-                self.errors.append(
-                    "SOURCE_UNAVAILABLE: SEC companyfacts did not answer for CIK "
-                    "%s (set SEC_USER_AGENT)." % ident["cik"])
         if bundle is None:
             self.state = State.SOURCE_UNAVAILABLE
             return
@@ -2134,7 +2050,7 @@ def print_header(led):
     print("=" * 80)
     print("%s  |  ledger key %s" % (ident.get("company_name") or "?", led["ledger_key"]))
     bits = [("LEI", ident.get("lei")), ("ISIN", ident.get("isin")),
-            ("CIK", ident.get("cik")), ("ticker", ident.get("ticker")),
+            ("ticker", ident.get("ticker")),
             ("reports in", ident.get("reporting_currency")),
             ("FY end", ident.get("fiscal_year_end"))]
     print("  " + "  |  ".join("%s %s" % (k, v) for k, v in bits
@@ -2486,7 +2402,6 @@ def cmd_all(args):
                      "company": led["identity"].get("company_name"),
                      "lei": led["identity"].get("lei"),
                      "isin": led["identity"].get("isin"),
-                     "cik": led["identity"].get("cik"),
                      "theses": sum(counts.values()),
                      "status_counts": counts,
                      "worst_status": next((s for s in STATUS_ORDER if counts.get(s)), None),
@@ -2745,8 +2660,9 @@ def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("company", nargs="?",
-                    help="company name, ticker, ISIN or LEI. Resolved through "
-                         "company_resolve.py; the ledger is keyed on LEI/ISIN/CIK.")
+                    help="European (Nordic/French ESEF) company name, ticker, "
+                         "ISIN or LEI. Resolved through company_resolve.py; "
+                         "the ledger is keyed on LEI/ISIN.")
     ap.add_argument("--add", metavar="THESIS",
                     help="add one falsifiable thesis sentence")
     ap.add_argument("--metric", action="append", metavar="ID",

@@ -132,17 +132,9 @@ inventing a number:
   with the share count and earnings of the time; the series is **unadjusted**
   for splits, dividends and **rights issues**, so a raw price ratio across any
   of those is wrong — a rights issue needs a TERP adjustment, and these are
-  common on the venues this plugin covers. For US names, build the series from
-  Nasdaq's own quote endpoint (the one `quote.py` already uses for price)
-  sampled at dated points, or reconstruct it from filings-derived EPS paired
-  with those dated prices; treat Yahoo's chart endpoint as an explicit
-  cross-check only, per `references/source-registry.md`, never as the source —
-  it is a tier-4, unofficial endpoint (`references/data-sources.md`) and is
-  confirmed unreachable from this container (`SKILL.md`). Where no compliant
-  free source yields the full window, report the US 10-year multiple history as
-  `DATA NOT AVAILABLE` rather than sourcing it from a restricted endpoint. Where
-  you cannot build the full window from a compliant source, give the shorter
-  one and say so.
+  common on the venues this plugin covers. Where the full ten-year window is
+  not available from a compliant source, give the shorter one and say so
+  rather than filling the gap from an unofficial endpoint.
 
 The rule is unchanged: an unsourceable number is `DATA NOT AVAILABLE`, never a
 plausible-looking invention.
@@ -260,13 +252,14 @@ Requirements:
   conservatism, not an identity. A higher figure assumes the company eventually
   becomes the economy.
 - **Use the right risk-free rate, in the cash flows' own currency.**
-  - US: 10-year Treasury.
   - Sweden: 10-year Swedish government bond. Fetch it live from Riksbanken —
     `https://api.riksbank.se/swea/v1/Observations/SEGVB10YC/<from>/<to>`
     (free, official, no key).
-  - Euro area: 10-year Bund or the relevant sovereign.
+  - Euro area: the ECB's AAA euro-area sovereign curve (`macro_se.py --euro`)
+    — a Bund proxy; for a French issuer this is not the OAT, see
+    `references/data-sources.md`.
 
-  Never discount SEK cash flows at a USD rate.
+  Never discount SEK cash flows at a rate from another currency.
 - **Beta and equity risk premium** must be stated as `ASSUMPTION` with a value,
   never left implicit. Defensible defaults when you cannot source a specific
   figure: ERP 4.5–5.5% for developed markets; beta from the company's own

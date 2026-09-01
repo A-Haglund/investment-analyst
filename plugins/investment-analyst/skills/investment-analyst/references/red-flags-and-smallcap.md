@@ -77,7 +77,7 @@ python scripts/mfn_news.py <slug> --regulatory --limit 40   # flags 1, 16, 19
 python scripts/ownership_se.py --name "NAME"                # context for 11, 12
 ```
 
-Then `esef_fundamentals.py` (or `sec_fundamentals.py`) for the ratio-based flags
+Then `esef_fundamentals.py` for the ratio-based flags
 in §2 and §3. Everything left over is in the notes to the annual report, and
 §7 lists exactly which ones.
 
@@ -87,13 +87,13 @@ in §2 and §3. Everything left over is in the notes to the annual report, and
 months**, or **any** issue for cash within twelve months of management stating
 that existing funding was sufficient. Where: `mfn_news.py <slug> --regulatory`
 carries every Swedish issue as a MAR release (`riktad nyemission`,
-`företrädesemission`, `konvertibel`); US filers show it as an 8-K plus an S-1,
-S-3 or 424B. Cross-check against the financing line of the cash-flow statement,
-which cannot be omitted the way a release can be overlooked. Why it matters: an
-issuer returning repeatedly to the market is not funding itself from operations,
-and each round resets the per-share arithmetic of every prior estimate. The
-pattern also tells you the terms available to the company, which is a harder
-fact about its prospects than anything in the CEO letter.
+`företrädesemission`, `konvertibel`). Cross-check against the financing line
+of the cash-flow statement, which cannot be omitted the way a release can be
+overlooked. Why it matters: an issuer returning repeatedly to the market is
+not funding itself from operations, and each round resets the per-share
+arithmetic of every prior estimate. The pattern also tells you the terms
+available to the company, which is a harder fact about its prospects than
+anything in the CEO letter.
 
 **2. High dilution.** Trigger: **diluted share count up more than 5% in a year**
 with no matching acquisition or capital programme; **more than 15% in one year**
@@ -111,7 +111,7 @@ company **ceasing to disclose headroom it previously disclosed**. That third one
 is the most informative and the easiest to miss — compare this year's financing
 note against last year's, not against a blank page. Where: the financial-risk /
 financing note in the annual report. **No free structured source. A human must
-read the note** — covenants are not tagged in ESEF or in SEC XBRL.
+read the note** — covenants are not tagged in ESEF.
 
 **4. Heavy near-term refinancing.** Trigger: **more than 30% of gross debt
 maturing within twelve months**, or maturing debt exceeding cash plus undrawn
@@ -130,10 +130,10 @@ conviction at LOW.
 three years**, or below 80% for a business that presents itself as asset-light.
 Three years, not one: a single year below 60% is usually working capital
 absorbed by growth and is not a finding. Where: computed from CFO and capex,
-both tagged in ESEF and SEC XBRL, so `esef_fundamentals.py` and
-`sec_fundamentals.py` give it directly. Follow the cumulative accrual gap
-procedure in `fundamentals.md` and name the balance-sheet line that absorbs the
-difference — a flag that cannot name the line is not yet a flag.
+both tagged in ESEF, so `esef_fundamentals.py` gives it directly. Follow the
+cumulative accrual gap procedure in `fundamentals.md` and name the
+balance-sheet line that absorbs the difference — a flag that cannot name the
+line is not yet a flag.
 
 **6. Persistently negative FCF.** Trigger: **negative FCF in three of the last
 five years** without an identified investment programme that has a stated end
@@ -209,10 +209,9 @@ back before comparing EBIT to an IFRS peer's.
 `fundamentals.md` so the two files cannot drift: **above 5% of revenue is
 material; above 10% demands an explicit adjustment in the valuation.** Add one
 more: **SBC above 25% of CFO**, which is the form that matters when revenue is
-small and cash flow is the binding constraint. Where: US filers tag SBC in the
-cash-flow statement and it comes straight out of `sec_fundamentals.py`. **For
-Swedish and Nordic ESEF filers SBC is frequently not tagged** — the script
-returns `DATA NOT AVAILABLE` and the figure lives in the annual report note on
+small and cash flow is the binding constraint. Where: **Swedish and Nordic
+ESEF filers frequently do not tag SBC** — `esef_fundamentals.py` returns
+`DATA NOT AVAILABLE` and the figure lives in the annual report note on
 incentive programmes. A human must read it. Until then, report owner-adjusted
 FCF as an **upper bound** and say so, exactly as `worked-example.md` extract 2
 does. Pair this with flag 2: buybacks that leave the diluted count flat are
@@ -240,8 +239,8 @@ named successor and without a stated reason**; **two CFOs in three years**; or
 because `bear-case-and-scoring.md` already carries an unexplained CFO departure
 as a standing sell trigger, and because the CFO is the person who signs off on
 everything the screen above measures. Where: MAR releases via `mfn_news.py
---regulatory` or Cision; 8-K Item 5.02 for US filers. Note the phrasing of the
-release, and note when a departure is effective immediately.
+--regulatory` or Cision. Note the phrasing of the release, and note when a
+departure is effective immediately.
 
 **14. Related-party transactions.** Trigger: **any loan to a board member,
 executive or controlling owner** — the threshold is existence, not size; or
@@ -264,9 +263,9 @@ occurs); **above 20%** makes it a structural risk that belongs in the bear case
 with a quantified impact; **top three above 50%** means the investment thesis is
 a thesis about a customer relationship, and the analysis should say so in the
 first paragraph rather than in a risk list. Where: the IFRS 8 major-customer
-note; US 10-K risk factors and the segment note. Check whether the concentration
-is a *customer* or a *contract* — a framework agreement with a renewal date is a
-dated risk, and the date belongs in the invalidating-KPI table. **K3 carries no
+note and the segment note. Check whether the concentration is a *customer* or
+a *contract* — a framework agreement with a renewal date is a dated risk, and
+the date belongs in the invalidating-KPI table. **K3 carries no
 equivalent mandatory major-customer disclosure**, so a blank note on a K3
 filer (`sweden.md`) is a framework fact, not evidence of low concentration —
 say so rather than marking the flag CLEAR.
@@ -286,8 +285,8 @@ a 30-day window**; **any PDMR sale in the 60 days before a profit warning or a
 materially weak report**; or a **CEO or CFO sale exceeding 25% of their
 disclosed holding**. Where: `insider_se.py --issuer "NAME" --months 12` for
 Sweden, which reads FI's Insynsregistret and covers Nasdaq Stockholm, First
-North, Spotlight and NGM from 2016-07-03; Form 4 on EDGAR for the US; BaFin
-Directors' Dealings for Germany; AMF for France.
+North, Spotlight and NGM from 2016-07-03; BaFin Directors' Dealings for
+Germany; AMF for France.
 
 **Read the price column before reading the direction.** Verified on KebNi
 2026-08-31: the register shows PDMR purchases at 0.14 and 0.19 SEK in periods
@@ -319,9 +318,9 @@ distinguish them.
 **19. Repeated guidance cuts.** Trigger: **two consecutive cuts to the same
 fiscal-year target**, or **any cut within 90 days of reaffirming** the same
 target. Where: MAR releases via `mfn_news.py --regulatory` — a Swedish profit
-warning (`vinstvarning`) is disclosable and cannot be buried in a slide deck;
-8-K Items 2.02 and 7.01 for US filers. Why the pattern rather than the single
-cut: one cut is a forecasting error, and every company makes them. Two in a row
+warning (`vinstvarning`) is disclosable and cannot be buried in a slide deck.
+Why the pattern rather than the single cut: one cut is a forecasting error,
+and every company makes them. Two in a row
 on the same target says management does not have visibility into its own
 business, and that invalidates every forward number you would otherwise take
 from them at `ESTIMATE`. Feed it into the guidance-accuracy assessment in
@@ -331,8 +330,7 @@ from them at `ESTIMATE`. Feed it into the guidance-accuracy assessment in
 inspection, dawn raid, tax reassessment, sanction procedure or enforcement
 decision. Where: MAR releases via `mfn_news.py --regulatory` or
 `cision_news.py`; Finansinspektionen's sanction decisions at fi.se;
-Konkurrensverket for Swedish competition matters; the SEC litigation releases
-and the 10-K legal-proceedings note for US filers. Report the fact, the
+Konkurrensverket for Swedish competition matters. Report the fact, the
 authority, the date, the disclosed provision if any, and nothing else. Quantify
 only what the company has itself provided for or what a published decision
 states. An open investigation has no established outcome, and writing as though

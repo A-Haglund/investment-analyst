@@ -1,7 +1,7 @@
 # investment-analyst
 
-A Claude Code plugin for equity research on Swedish, Nordic, German, French and
-US listed companies, ending in a sourced BUY / HOLD / SELL call.
+A Claude Code plugin for equity research on Swedish, Nordic, German and French
+listed companies, ending in a sourced BUY / HOLD / SELL call.
 
 It is built on one constraint, and everything else follows from it:
 
@@ -11,7 +11,7 @@ It is built on one constraint, and everything else follows from it:
 
 Bloomberg, FactSet, Capital IQ, LSEG, Refinitiv and Börsdata are excluded by
 design, not by oversight. What is used instead is the primary material those
-vendors resell: SEC EDGAR, ESEF/XBRL filings, Finansinspektionen's insider,
+vendors resell: ESEF/XBRL filings, Finansinspektionen's insider,
 short-selling and fund-holdings registers, MFN and Cision regulatory releases,
 Nasdaq Nordic and NGM reference data, Riksbanken, SCB, ESMA FIRDS and GLEIF.
 
@@ -36,6 +36,11 @@ it is. That discipline lives in code rather than in instructions:
 - **A check that could not run is not a check that passed.** Unreachable
   sources degrade to `not checked` and are counted, never folded into a clean
   result.
+- **No identifying User-Agent, so no SEC EDGAR — and no US coverage.** SEC's
+  fair-access policy requires a real contact address on every request, which
+  would identify the analyst behind each run; a fabricated address would
+  breach the policy this tool is bound by. US equities are out of scope as a
+  result — a deliberate boundary, not a gap. See `SKILL.md` §3.
 
 ## Commands
 
@@ -90,7 +95,7 @@ plugins/investment-analyst/
     SKILL.md                      method, depths, output contract
     references/                   13 files: valuation, fundamentals, Sweden,
                                   Europe, data quality, verification, sources
-    scripts/                      28 Python scripts, stdlib only
+    scripts/                      27 Python scripts, stdlib only
     tests/                        21 test files
 tools/pack.py                     builds the distributable zip
 PLUGIN-BRIEF.md                   a detailed technical brief
@@ -98,7 +103,7 @@ PLUGIN-BRIEF.md                   a detailed technical brief
 
 ## Tests
 
-364 tests, all passing against live free endpoints.
+374 tests, all passing against live free endpoints.
 
 ```bash
 cd plugins/investment-analyst/skills/investment-analyst/tests
@@ -116,11 +121,6 @@ to elsewhere.
 ## Requirements
 
 Python 3, standard library only. No pip install, no virtualenv, no lockfile.
-SEC EDGAR requires a contact address in `SEC_USER_AGENT`:
-
-```bash
-export SEC_USER_AGENT="Your Name your.email@example.com"
-```
 
 ## Known limits
 

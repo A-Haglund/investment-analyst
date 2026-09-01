@@ -40,22 +40,31 @@ is the full per-check list, for callers that want more than the headline.
 Every argument is a finfact.FinancialFact (or None, meaning "not supplied" -
 itself a fail on any check that needed it). Nothing here accepts a bare float.
 
-CLI (network, live data - this is what the eight checks are tested against):
+CLI (network, live data - this is what the eight checks are tested against;
+outcomes verified live 2026-09-01, as-of the same date):
 
     python valuation_gate.py "Sandvik"          # FAILS - the motivating case
     python valuation_gate.py "Evolution"        # FAILS - SEK price, EUR books
-    python valuation_gate.py "AB Volvo"         # dual share class
-    python valuation_gate.py "KebNi"            # First North, no ESEF
-    python valuation_gate.py NVDA               # PASSES - current SEC data
+    python valuation_gate.py "AB Volvo"         # FAILS - annual figure stale, no fresh interim TTM
+    python valuation_gate.py "KebNi"            # FAILS - First North, no ESEF
+    python valuation_gate.py "Assa Abloy"       # PASSES - fresh ttm_engine.py TTM, matching currencies
     python valuation_gate.py "Sandvik" --json --explain
 
+Coverage is European (Nordic/French ESEF issuers) only - this toolkit does
+not query SEC EDGAR anywhere, so a US ticker simply fails to resolve through
+the identity chain below rather than being served, correctly or otherwise.
+
 Nordic identity/currency comes from company_resolve.py; earnings from
-esef_fundamentals.py's own extraction helpers (Nordic) or sec_fundamentals.py
-(US); shares from Nasdaq Nordic reference data (Nordic) or SEC XBRL diluted
-weighted-average (US); corporate actions from corporate_actions.py --shares'
-underlying share_history(); price from quote.py's Yahoo source. ttm_engine.py
-is imported softly (spec: it is being written in parallel) - its absence
-degrades the TTM-completeness check to a warning, never a crash.
+esef_fundamentals.py's own extraction helpers, rolled forward into a genuine
+trailing-twelve-month figure by ttm_engine.py wherever interim reports allow
+it (falling back to the raw, honestly-labelled annual figure otherwise -
+never silently calling that a TTM); shares from Nasdaq Nordic reference data
+for market cap, and share_semantics.py's diluted (or basic) weighted-average
+count for a per-share multiple, when a LEI resolves one; corporate actions
+from corporate_actions.py --shares' underlying share_history(); price from
+quote.py's Yahoo source. ttm_engine.py and share_semantics.py are both loaded
+softly - either one's absence degrades the relevant check to a warning or to
+the pre-existing weaker basis, never a crash.
 
 Python 3 stdlib only. Free, keyless.
 """
@@ -77,16 +86,6 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-
-# SEC's fair-access policy requires a descriptive User-Agent. sec_fundamentals
-# reads this from the environment AT IMPORT TIME, so it must be set before the
-# module is loaded below. Same convention sec_fundamentals.py itself suggests.
-# SEC fair-access requires a real contact address on every request. Prefer
-# setting SEC_USER_AGENT in the environment; this fallback exists so an
-# unattended run does not die on a missing variable, but an identity baked
-# into a shared repository is a smell - it makes every clone speak as one
-# person to a regulator.
-os.environ.setdefault("SEC_USER_AGENT", "Adam Haglund haglund.adam@icloud.com")
 
 UA = "Mozilla/5.0 (compatible; investment-analyst-skill/1.0)"
 
@@ -119,7 +118,7 @@ FRESHNESS_DAYS = finfact.FRESHNESS_DAYS
 nordic_shares = _soft_load("nordic_shares")
 quote = _soft_load("quote")
 esef_fundamentals = _soft_load("esef_fundamentals")
-sec_fundamentals = _soft_load("sec_fundamentals")
+share_semantics = _soft_load("share_semantics")
 corporate_actions = _soft_load("corporate_actions")
 
 # ttm_engine.py is being written in parallel by another agent (spec instruction:
@@ -144,11 +143,11 @@ PRICE_MAX_AGE_DAYS = 4
 # multiple is presumptively stale. Built from the reporting cadence: a fresh
 # TTM should turn over every quarter (90 days), and issuers are typically given
 # on the order of 45 days to file an interim report after a quarter closes
-# (SEC 10-Q: 40-45 days for large filers; Nasdaq Nordic / EU Transparency
-# Directive interim windows are comparable). 90 + 45 = 135 days is therefore
-# the point by which a FRESHER interim report should already exist and should
-# have been rolled forward into the figure being gated. Sandvik's actual gap
-# (608 days) blows through this by more than 4x - it is not a borderline case.
+# (Nasdaq Nordic / EU Transparency Directive interim windows). 90 + 45 = 135
+# days is therefore the point by which a FRESHER interim report should already
+# exist and should have been rolled forward into the figure being gated.
+# Sandvik's actual gap (608 days) blows through this by more than 4x - it is
+# not a borderline case.
 MAX_EARNINGS_LAG_DAYS = 135
 
 # Below this fraction of the hard limit, print a heads-up rather than a fail -
@@ -631,6 +630,116 @@ def _price_fact_from_yahoo(yahoo_symbol, fallback_currency=None):
 NA = "DATA NOT AVAILABLE"
 
 
+class _TTMResult(object):
+    """Adapter exposing the .complete / .reason shape check_ttm_completeness()
+    expects from an object "wired in" from ttm_engine.py (see gate()'s own
+    docstring for `ttm_engine_result`). ttm_engine.assemble() returns a plain
+    dict, not this shape, so this is the seam between the two files."""
+
+    def __init__(self, result):
+        self.complete = (result.get("state") == "OK"
+                         and result.get("completeness") == "COMPLETE")
+        self.reason = result.get("reason")
+
+
+def _ttm_operating_income(company_name, country, lei, as_of):
+    """A genuinely assembled trailing-twelve-month operating_income via
+    ttm_engine.py (interim MFN/Cision releases plus the ESEF annual anchor),
+    or (None, None, reason) when it cannot be assembled.
+
+    This is what turns "the latest annual report" into an honest TTM figure
+    instead of the naive mislabeling check_ttm_completeness exists to catch -
+    see its own docstring and the module's REUSABLE API notes on
+    `ttm_engine_result`. ttm_engine.py is soft-loaded at import time, so its
+    absence degrades this to the pre-existing annual-only behaviour, never a
+    crash.
+    """
+    if ttm_engine is None:
+        return None, None, "ttm_engine.py not available"
+    try:
+        who = ttm_engine.locate(company_name, country, lei=lei)
+    except (Exception, SystemExit) as e:
+        return None, None, "ttm_engine.locate() failed: %s" % e
+
+    reports = []
+    try:
+        if who.get("mfn_slug"):
+            reports = ttm_engine.harvest_mfn(who["mfn_slug"])
+        if not reports and who.get("cision_slug"):
+            reports = ttm_engine.harvest_cision(who["cision_slug"])
+    except (Exception, SystemExit) as e:
+        return None, None, "ttm_engine report harvest failed: %s" % e
+    if not reports:
+        return None, None, "ttm_engine found no interim/annual report releases"
+
+    as_of_str = as_of.isoformat() if hasattr(as_of, "isoformat") else str(as_of)[:10]
+    reports = [r for r in reports if (r["published"] or "9999") <= as_of_str]
+    if not reports:
+        return None, None, "ttm_engine found no report released on or before %s" % as_of_str
+
+    observations, esef_ends = [], []
+    lei_for_esef = who.get("lei") or lei
+    if lei_for_esef:
+        try:
+            esef_obs, esef_ends = ttm_engine.esef_observations(lei_for_esef)
+            observations += esef_obs
+        except (Exception, SystemExit):
+            pass
+
+    try:
+        fye_md, _src, _warn = ttm_engine.detect_fye(reports, esef_ends)
+    except (Exception, SystemExit) as e:
+        return None, None, "ttm_engine.detect_fye() failed: %s" % e
+    if fye_md is None:
+        return None, None, "ttm_engine could not establish the fiscal year end"
+
+    for r in reports:
+        try:
+            obs, _w = ttm_engine.extract_observations(
+                r["text"], r["title"], ttm_engine.d(r["published"]),
+                fye_md, r["source"], r["url"])
+            observations += obs
+        except (Exception, SystemExit):
+            continue
+
+    try:
+        ledger = ttm_engine.build_ledger(observations)
+        for extra in ttm_engine.synthesise_discretes(ledger, fye_md):
+            ledger.setdefault(extra.key(), []).append(extra)
+
+        text_ends = [ttm_engine.d(k[2]) for k, rows in ledger.items()
+                    if rows[0].source in ("mfn", "cision")
+                    and (rows[0].published or "") <= as_of_str]
+        anchor_end = max(text_ends) if text_ends else None
+
+        result = ttm_engine.assemble(ledger, "operating_income", fye_md, as_of_str,
+                                     [], anchor_end)
+        if result.get("value") is None:
+            return result, None, result.get("reason") or "ttm_engine could not assemble a TTM figure"
+        fact = ttm_engine.build_fact(result, fye_md)
+    except (Exception, SystemExit) as e:
+        return None, None, "ttm_engine ledger/assembly failed: %s" % e
+    return result, fact, None
+
+
+def _diluted_shares_fact(company_name, lei):
+    """The correct per-share basis (diluted, then basic, weighted-average
+    shares) via share_semantics.py, when a LEI is available - not the
+    listed/registered-including-treasury count check_share_count() itself
+    flags as the WRONG basis for a per-share multiple."""
+    if share_semantics is None or lei is None:
+        return None
+    try:
+        wa = share_semantics.weighted_average_and_diluted_facts(
+            company_name, filings=1, known_lei=lei)
+    except (Exception, SystemExit):
+        return None
+    fact, _detail = wa.get("diluted") or (None, None)
+    if fact is None:
+        fact, _detail = wa.get("basic") or (None, None)
+    return fact
+
+
 def _gather_nordic(name):
     notes = []
     identity = _run_company_resolve(name)
@@ -757,6 +866,33 @@ def _gather_nordic(name):
                          "cap, wrong basis for EPS." % (n_classes,
                          ", ".join(c.get("symbol") or "?" for c in share_classes)))
 
+    # The listed/registered count above is the right basis for market cap and
+    # the WRONG one for a per-share earnings multiple (check_share_count()
+    # fails it on purpose). Prefer the diluted (or basic) weighted-average
+    # count share_semantics.py resolves from the same ESEF filing, when a LEI
+    # is available - this does not discard the registered count, which stays
+    # in the notes/market-cap picture; it only changes what per_share_metric
+    # checks see as `shares_fact`.
+    registered_shares_fact = shares_fact
+    diluted_fact = _diluted_shares_fact(company_label, lei)
+    if diluted_fact is not None:
+        shares_fact = diluted_fact
+        # A directly-tagged weighted-average/diluted count carries no `.note`
+        # (only share_semantics.py's DERIVED fallback sets one) - fall back to
+        # the fact's own metric name so check_share_count() always sees a real
+        # semantic label, never a bare None that reads as "not declared".
+        semantics_label = diluted_fact.note or diluted_fact.metric
+        notes.append("share count for the per-share check is %s (%s), via "
+                     "share_semantics.py; the listed/registered total above "
+                     "remains the correct basis for market cap."
+                     % (semantics_label, "{:,.0f}".format(diluted_fact.value)
+                        if diluted_fact.value else "?"))
+    elif registered_shares_fact is not None:
+        notes.append("share_semantics.py did not resolve a diluted/weighted-average "
+                     "share count; falling back to the listed/registered total, "
+                     "which check_share_count() correctly flags as the wrong basis "
+                     "for a per-share multiple.")
+
     # ---- earnings (ESEF annual report) ----------------------------------
     earnings_fact = None
     restated, restatement_detail = None, None
@@ -827,6 +963,42 @@ def _gather_nordic(name):
                     except Exception:
                         pass
 
+    # ---- TTM (ttm_engine.py: roll the annual figure forward with interim
+    # reports, rather than let the stale annual figure above be silently
+    # mislabeled "TTM" the way check_ttm_completeness() exists to catch) ----
+    # Gated on `lei is not None`, same as the ESEF earnings section above:
+    # without a LEI there is no ESEF anchor for ttm_engine's own fiscal-year-end
+    # cross-check either, so there is nothing this would usefully add - and
+    # skipping it keeps this function from making a live MFN/Cision name
+    # search for every bare query, which is not this function's call to make
+    # when the earnings section right above it already declined for the same
+    # reason.
+    annual_earnings_fact = earnings_fact
+    ttm_result = ttm_fact = None
+    ttm_reason = "no LEI resolved - cannot cross-check ttm_engine's fiscal year end"
+    if lei is not None:
+        try:
+            ttm_result, ttm_fact, ttm_reason = _ttm_operating_income(
+                company_label, (identity or {}).get("country") or "SE", lei,
+                datetime.date.today())
+        except (Exception, SystemExit) as e:
+            ttm_result, ttm_fact, ttm_reason = None, None, "ttm_engine raised %s" % e
+    ttm_engine_result = _TTMResult(ttm_result) if ttm_result is not None else None
+    if ttm_fact is not None:
+        earnings_fact = ttm_fact
+        notes.append("operating_income is a ttm_engine.py rolling twelve-month "
+                     "figure (method %s, completeness %s), not the raw annual "
+                     "ESEF report used above as the restatement check's basis."
+                     % (ttm_result.get("method"), ttm_result.get("completeness")))
+    elif annual_earnings_fact is not None:
+        notes.append("ttm_engine.py could not assemble a rolling twelve-month "
+                     "operating_income (%s); using the raw annual ESEF figure, "
+                     "which check_ttm_completeness() will correctly refuse to "
+                     "call a TTM." % (ttm_reason or "no reason given"))
+    else:
+        notes.append("ttm_engine.py could not assemble a rolling twelve-month "
+                     "operating_income either (%s)." % (ttm_reason or "no reason given"))
+
     # ---- corporate actions (Nasdaq CNS share-count disclosure log) -----
     ca_facts = None
     if corporate_actions is None:
@@ -865,10 +1037,16 @@ def _gather_nordic(name):
         "company": company_label,
         "metric_name": "EV/EBIT (TTM)",
         "per_share_metric": True,
-        "share_semantics": shares_fact.note if shares_fact else None,
-        "is_ttm": True,   # the realistic failure mode: upstream calls the latest
-                          # available annual figure "TTM" because it is the newest
-                          # thing on file, which is only true the day it is filed.
+        "share_semantics": ((shares_fact.note or shares_fact.metric)
+                            if shares_fact else None),
+        # True whenever earnings_fact is being asserted as a TTM figure - which
+        # is every case here, including the annual-report fallback: that is
+        # the realistic failure mode (upstream calling the latest available
+        # annual figure "TTM" because it is the newest thing on file, which is
+        # only true the day it is filed) that ttm_engine_result, when present,
+        # actually earns rather than merely claims.
+        "is_ttm": True,
+        "ttm_engine_result": ttm_engine_result,
         "corporate_action_facts": ca_facts,
         "restated": restated,
         "restatement_detail": restatement_detail,
@@ -878,86 +1056,16 @@ def _gather_nordic(name):
     return bundle, notes
 
 
-def _gather_us(name):
-    notes = []
-    if sec_fundamentals is None:
-        return None, ["sec_fundamentals.py not available."]
-    try:
-        cik, entity_name = sec_fundamentals.resolve(name)
-    except SystemExit as e:
-        return None, [str(e)]
-    try:
-        facts = sec_fundamentals.get("%s/api/xbrl/companyfacts/CIK%s.json"
-                                    % (sec_fundamentals.BASE, cik))
-    except Exception as e:
-        return None, ["SEC EDGAR unreachable: %s" % e]
-
-    def latest(tags, annual_fallback=True):
-        found = sec_fundamentals.series(facts, tags, annual=False)
-        if not found and annual_fallback:
-            found = sec_fundamentals.series(facts, tags, annual=True)
-        if not found:
-            return None
-        return found[sorted(found)[-1]]
-
-    oi_row = latest(sec_fundamentals.CONCEPTS["operating_income"])
-    sd_row = latest(sec_fundamentals.CONCEPTS["shares_diluted"])
-
-    earnings_fact = None
-    if oi_row:
-        is_quarterly = str(oi_row["form"]).startswith("10-Q")
-        currency = "USD" if oi_row.get("unit") == "USD" else None
-        earnings_fact = FinancialFact(
-            metric="operating_income", value=oi_row["val"], source="sec_xbrl",
-            period_end=oi_row["end"], currency=currency, publication_date=oi_row["filed"],
-            freshness_key="interim_financials" if is_quarterly else "annual_financials",
-            source_detail="XBRL tag %s, form %s, accession %s"
-                          % (oi_row["tag"], oi_row["form"], oi_row["accn"]),
-            note=("latest discrete %s quarter - not an assembled TTM (10-Q income-statement "
-                 "data has no discrete Q4; deriving one needs the 10-K minus nine months, "
-                 "which this path does not attempt)." % oi_row["fp"] if is_quarterly
-                 else "latest annual (10-K) figure."))
-    else:
-        notes.append("no operating_income tag matched in SEC companyfacts.")
-
-    shares_fact = None
-    if sd_row:
-        shares_fact = FinancialFact(
-            metric="shares_outstanding", value=sd_row["val"], source="sec_xbrl",
-            unit="shares", period_end=sd_row["end"], publication_date=sd_row["filed"],
-            freshness_key="shares_outstanding",
-            source_detail="XBRL tag %s, form %s, accession %s"
-                          % (sd_row["tag"], sd_row["form"], sd_row["accn"]),
-            note="diluted_weighted_average")
-    else:
-        notes.append("no diluted-shares tag matched in SEC companyfacts.")
-
-    price_fact, err = _price_fact_from_yahoo(name.upper())
-    if err:
-        notes.append(err)
-
-    notes.append("SEC EDGAR has no free source of share-count-changing disclosures comparable "
-                "to Nasdaq CNS, so the corporate-actions check cannot be verified on this path.")
-
-    context = {
-        "company": entity_name or name,
-        "metric_name": "EV/EBIT (quarterly, not TTM)",
-        "per_share_metric": True,
-        "share_semantics": shares_fact.note if shares_fact else None,
-        "is_ttm": False,
-        "corporate_action_facts": None,
-        "restated": None,
-        "restatement_detail": None,
-    }
-    bundle = {"price_fact": price_fact, "earnings_fact": earnings_fact,
-             "shares_fact": shares_fact, "context": context}
-    return bundle, notes
-
-
 def gather(name):
-    """Best-effort live-data assembly for the CLI. Tries the Nordic chain
-    first (company_resolve -> ESEF -> Nasdaq CNS), then SEC EDGAR. Returns
-    (bundle_or_None, notes, path) where path is 'nordic', 'us', or None."""
+    """Best-effort live-data assembly for the CLI: the Nordic/European chain
+    (company_resolve -> ESEF -> ttm_engine -> share_semantics -> Nasdaq CNS).
+    Returns (bundle_or_None, notes, path) where path is 'nordic' or None.
+
+    US issuers are out of scope for this toolkit (SEC EDGAR is not queried
+    anywhere in it), so a US ticker simply will not resolve through the
+    Nordic/European identity chain above and this returns None with notes
+    explaining why - never a guess dressed up as a European company.
+    """
     notes = []
     try:
         nordic_bundle, nordic_notes = _gather_nordic(name)
@@ -966,14 +1074,6 @@ def gather(name):
     notes += nordic_notes
     if nordic_bundle and (nordic_bundle["price_fact"] or nordic_bundle["earnings_fact"]):
         return nordic_bundle, notes, "nordic"
-
-    try:
-        us_bundle, us_notes = _gather_us(name)
-    except Exception as e:
-        us_bundle, us_notes = None, ["US path raised %s" % e]
-    notes += us_notes
-    if us_bundle and (us_bundle["price_fact"] or us_bundle["earnings_fact"]):
-        return us_bundle, notes, "us"
 
     return None, notes, None
 
@@ -994,8 +1094,8 @@ def _fact_summary(fact):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("company", help='company name or US ticker, e.g. "Sandvik", '
-                                    '"AB Volvo", "Evolution", "KebNi", NVDA')
+    ap.add_argument("company", help='European (Nordic/French ESEF) company name, '
+                                    'e.g. "Sandvik", "AB Volvo", "Evolution", "KebNi"')
     ap.add_argument("--as-of", help="YYYY-MM-DD, default today")
     ap.add_argument("--json", action="store_true", dest="as_json")
     ap.add_argument("--explain", action="store_true",

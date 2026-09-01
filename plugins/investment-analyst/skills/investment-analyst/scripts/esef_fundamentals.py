@@ -6,8 +6,7 @@ financial report in ESEF - IFRS concepts tagged in Inline XBRL. XBRL
 International aggregates those filings at filings.xbrl.org and publishes an
 xBRL-JSON rendering of each, which is what this script reads.
 
-This is the European counterpart to sec_fundamentals.py, with two honest
-caveats that the SEC data does not have:
+Two honest caveats:
 
   * ESEF Phase 1 mandates tagging of the PRIMARY STATEMENTS only. Note-level
     detail is often absent, so metrics like SBC or capex may not be tagged.

@@ -88,23 +88,19 @@ INPUTS AND THEIR LIMITS:
                          claim VERIFIED and carry no publication_date - this
                          is a real, stated limitation of the free source, not
                          a bug here.
-  sec_fundamentals.py    US GAAP annual figures via SEC XBRL companyfacts.
-                         Carries a `filed` date per fact, which becomes
-                         publication_date - materially better provenance than
-                         the ESEF path.
   company_resolve.py     Identity, reporting currency and fiscal year end for
                          Nordic issuers (LEI, used to pull ESEF filings).
   finfact.py             FinancialFact / Verification / State / confidence.
 
-Python 3 stdlib only. Free and keyless (SEC XBRL requires only a descriptive
-User-Agent already required by sec_fundamentals.py: env SEC_USER_AGENT).
+Python 3 stdlib only. Free and keyless.
+
+Coverage: European (Nordic/French ESEF) issuers only. A US ticker or CIK is
+DATA NOT AVAILABLE here - see module note below.
 
 Usage:
     python earnings_quality.py "Sandvik"
     python earnings_quality.py "Evolution AB" --years 5
     python earnings_quality.py "Addtech" --json
-    python earnings_quality.py NVDA
-    python earnings_quality.py NVDA --sec          # skip the Nordic lookup
 """
 import argparse
 import datetime
@@ -133,15 +129,11 @@ def load(name):
 
 finfact = load("finfact")
 esef = load("esef_fundamentals")
-sec = load("sec_fundamentals")
 company_resolve = load("company_resolve")
 
 FinancialFact = finfact.FinancialFact
 Verification = finfact.Verification
 
-# Metric names shared between esef_fundamentals.CONCEPTS and
-# sec_fundamentals.CONCEPTS - this symmetry is deliberate on both scripts'
-# part and is what lets one code path here handle either source.
 NEEDED = ("revenue", "net_income", "operating_income", "cfo", "capex",
           "total_assets", "inventory", "receivables", "payables")
 
@@ -166,7 +158,7 @@ def weakest_verification(*inputs):
 
 
 # --------------------------------------------------------------------------
-# Fetch: ESEF (Nordic/French) or SEC (US) into a common
+# Fetch: ESEF (Nordic/French) into a common
 # {metric: {period_end_iso: FinancialFact}} shape.
 # --------------------------------------------------------------------------
 
@@ -238,22 +230,6 @@ def fetch_esef(lei, years):
     return merged, filings, None
 
 
-def fetch_sec(symbol, years):
-    cik, name = sec.resolve(symbol)
-    facts = sec.get("%s/api/xbrl/companyfacts/CIK%s.json" % (sec.BASE, cik))
-    name = facts.get("entityName", name)
-    result = {}
-    for metric in NEEDED:
-        tags = sec.CONCEPTS.get(metric)
-        if not tags:
-            continue
-        found = sec.series(facts, tags, annual=True)
-        if found:
-            keys = sorted(found)[-(years + 3):]
-            result[metric] = {k: found[k] for k in keys}
-    return result, name, cik
-
-
 def to_facts_esef(merged, currency):
     out = {}
     for metric, periods in merged.items():
@@ -263,21 +239,6 @@ def to_facts_esef(merged, currency):
                 metric=metric, value=info["val"], source="esef",
                 period_end=period_end, unit="currency", currency=currency,
                 source_detail="ESEF concept %s, filing %s" % (info["concept"], info["filing"]),
-                verification=Verification.SINGLE_SOURCE,
-                freshness_key="annual_financials")
-    return out
-
-
-def to_facts_sec(result, currency):
-    out = {}
-    for metric, periods in result.items():
-        out[metric] = {}
-        for period_end, f in periods.items():
-            out[metric][period_end] = FinancialFact(
-                metric=metric, value=f["val"], source="sec_xbrl",
-                period_end=period_end, unit="currency", currency=currency,
-                publication_date=f.get("filed"),
-                source_detail="tag %s, form %s, accession %s" % (f["tag"], f["form"], f.get("accn")),
                 verification=Verification.SINGLE_SOURCE,
                 freshness_key="annual_financials")
     return out
@@ -851,24 +812,20 @@ def to_json(result):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("query", help="company name (Nordic/French ESEF issuer) or US ticker/CIK")
+    ap.add_argument("query", help="company name (Nordic/French ESEF issuer)")
     ap.add_argument("--years", type=int, default=5,
                     help="years of annual history to analyse; also caps the largest reporting window")
     ap.add_argument("--country", help="restrict Nordic name resolution to one ISO country, e.g. SE")
-    ap.add_argument("--sec", action="store_true", help="skip Nordic resolution, treat query as a US ticker/CIK")
     ap.add_argument("--json", action="store_true", dest="as_json")
     args = ap.parse_args()
     if args.years < 1:
         ap.error("--years must be at least 1")
 
     record, contenders = None, []
-    if not args.sec:
-        try:
-            record, reason, contenders = resolve_nordic(args.query, args.country)
-        except SystemExit:
-            record = None
-        except Exception as e:  # a Nordic-source outage must not stop the US fallback
-            record = None
+    try:
+        record, reason, contenders = resolve_nordic(args.query, args.country)
+    except (Exception, SystemExit):
+        record = None
 
     if record is not None:
         lei = record.get("lei")
@@ -890,23 +847,13 @@ def main():
         for c in contenders:
             print("  %s" % c.display())
         print()
-        print("Re-run with the ticker, ISIN or full legal name, or pass --sec if this "
-              "is a US filer whose name collides with a Nordic one.")
+        print("Re-run with the ticker, ISIN or full legal name.")
         return 2
     else:
-        try:
-            result_sec, name, cik = fetch_sec(args.query, args.years)
-        except SystemExit as e:
-            print(str(e))
-            return 1
-        currency = None
-        money = {f["unit"] for m, s in result_sec.items() for f in s.values() if f.get("unit")}
-        if money == {"USD"}:
-            currency = "USD"
-        elif money:
-            currency = "/".join(sorted(money))
-        facts = to_facts_sec(result_sec, currency)
-        result = analyse(facts, currency, "%s (CIK %s)" % (name, cik), "sec_xbrl")
+        print("DATA NOT AVAILABLE: %r did not resolve to a Nordic/French ESEF "
+              "issuer. US issuers are out of scope; this toolkit covers "
+              "European venues only." % args.query)
+        return 1
 
     if args.as_json:
         print(json.dumps(to_json(result), indent=2, ensure_ascii=False, default=str))

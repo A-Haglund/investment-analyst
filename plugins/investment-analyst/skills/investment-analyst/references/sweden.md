@@ -2,8 +2,7 @@
 
 Regulated-market issuers (Large Cap, Mid Cap, Small Cap) report under IFRS.
 First North (outside Premier), Spotlight and NGM issuers may report under
-Swedish GAAP instead — see "Accounting basis: IFRS or K3" below. None of them
-file with the SEC, so `sec_fundamentals.py` will not find them. Two structured
+Swedish GAAP instead — see "Accounting basis: IFRS or K3" below. Two structured
 routes exist, plus the report PDFs.
 
 ## Source chain
@@ -292,7 +291,8 @@ Use `SEGVB10YC` for any SEK-denominated DCF. **Statistics Sweden (SCB)** at
 | **Börsdata** (borsdata.se) | Nordic fundamentals and ratios with an official API | Paid — deliberately excluded by design, see `source-registry.md` |
 | **allabolag.se / Bolagsverket** | Legal entity data, board, subsidiary annual accounts | Free / per-document fee |
 | **Nasdaq OMX Nordic** | Segment, share classes, index membership, turnover | Free |
-| **Avanza, Nordnet** | Quotes, holder counts | Unofficial |
+| **Avanza** | IR homepage pointer and share-count cross-check, fetched by `ir_discovery.py`; the next-report date, fetched by `horizon.py` | Unofficial |
+| **Nordnet** | Quotes, holder counts — not fetched by any script here; manual lookup only | Unofficial |
 | **DI, Affärsvärlden, Placera** | News and commentary | Secondary tier — context only |
 
 ## Market segments
@@ -356,8 +356,9 @@ costs nothing. Under K3:
   EUR and USD, so FX is often a large part of reported growth. Companies
   normally disclose organic versus currency versus M&A; use that split.
 - **IFRS 16 leases** are on balance sheet for IFRS filers — see the lease
-  section in `fundamentals.md` before comparing a Swedish company against a US
-  one. K3 filers have no IFRS 16 equivalent; see "Accounting basis" above.
+  section in `fundamentals.md` before comparing a Swedish company against a
+  peer under a different lease-accounting framework. K3 filers have no IFRS 16
+  equivalent; see "Accounting basis" above.
 - **Dividends**: approved at the AGM (`årsstämma`) in spring. Historically a
   single annual payment, but many large caps now split it into two or four
   instalments — Atlas Copco, Epiroc, Essity and Sandvik among them. Check the
