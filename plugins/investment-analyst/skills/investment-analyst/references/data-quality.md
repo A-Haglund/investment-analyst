@@ -155,8 +155,8 @@ any historical assessment worthless.
 
 Rules:
 
-- Record `published_at` wherever the source exposes it — SEC `filed` and
-  `acceptanceDateTime`, MFN and Cision publish timestamps, FI's separate
+- Record `published_at` wherever the source exposes it — MFN and Cision
+  publish timestamps, FI's separate
   publication and transaction dates, the ESEF index's added date.
 - A historical analysis may use only information published on or before the
   analysis date.

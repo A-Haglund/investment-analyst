@@ -110,18 +110,13 @@ Leverage and interest coverage as defined here do not apply to banks or
 insurers — see `references/valuation.md`'s "Financials and real estate"
 section for the substitute framework.
 
-### Leases — required before comparing a Swedish and a US company
+### Leases — required before any cross-framework comparison
 
-IFRS 16 and ASC 842 treat leases differently, and this silently breaks
-cross-border comparison:
-
-- **IFRS 16** (Swedish, Nordic, French filers): *all* leases are on balance
-  sheet as a lease liability, with depreciation and interest replacing rent.
-  Rent is therefore **excluded** from opex, so **EBITDA is inflated** and lease
-  interest sits in interest expense.
-- **ASC 842** (US filers): finance leases behave like IFRS 16, but **operating
-  lease expense stays in operating costs**, so US EBITDA is *not* inflated the
-  same way.
+IFRS 16 puts *all* leases on balance sheet as a lease liability, with
+depreciation and interest replacing rent. Rent is therefore **excluded** from
+opex, so **EBITDA is inflated** relative to a framework that leaves operating
+leases off balance sheet, and lease interest sits in interest expense rather
+than opex.
 
 Rules for this skill:
 
@@ -129,17 +124,19 @@ Rules for this skill:
    MTF issuer — First North (outside Premier), Spotlight or NGM — may report
    consolidated accounts under Swedish GAAP **K3**, which has no IFRS 16
    equivalent: operating leases stay off balance sheet and rent stays in
-   operating expenses, so its EBITDA is on the US basis above, not the IFRS
-   one, and there is no lease liability to add to `total_debt`. See
-   `references/sweden.md`'s "Accounting basis: IFRS or K3" section before
-   applying any rule below.
+   operating expenses, and there is no lease liability to add to
+   `total_debt`. See `references/sweden.md`'s "Accounting basis: IFRS or K3"
+   section before applying any rule below.
 2. For an IFRS filer, state explicitly whether `total_debt` includes lease
    liabilities. Default to **including** them — they are contractual
    obligations.
-3. When comparing an IFRS filer against a US filer on EV/EBITDA or ND/EBITDA,
-   say that the bases differ, and prefer **EV/EBIT** which is far less affected.
-4. For interest coverage on an IFRS filer, note whether lease interest is in the
-   denominator; it usually is, and it depresses the ratio versus a US peer.
+3. When comparing an IFRS filer against a K3 filer, or any peer whose
+   framework does not capitalise operating leases, on EV/EBITDA or
+   ND/EBITDA, say that the bases differ, and prefer **EV/EBIT** which is far
+   less affected.
+4. For interest coverage on an IFRS filer, note whether lease interest is in
+   the denominator; it usually is, and it depresses the ratio versus a peer
+   under a framework that keeps rent in opex.
 
 Lease-heavy businesses — retail, restaurants, airlines, logistics — are where
 this matters most. For an asset-light software company it is usually immaterial;

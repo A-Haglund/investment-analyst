@@ -54,7 +54,6 @@ Usage:
     python ttm_engine.py "H&M" --json
     python ttm_engine.py "KebNi" --as-of 2026-05-01
     python ttm_engine.py "Sandvik" --cision-slug sandvik --lei 5299008ZUAXN43LVZF54
-    python ttm_engine.py AAPL --sec            # US filers, straight from 10-Q XBRL
     python ttm_engine.py --selftest            # period arithmetic + number parsing
 
 WHERE THE REPORTS COME FROM. MFN's per-issuer feed (/a/<slug>.json) returns only
@@ -68,7 +67,8 @@ Cision is still read directly for the issuers MFN does not mirror, such as H&M,
 and there the RSS description is truncated at about 600 characters, so the
 release page itself is fetched and cached.
 
-Free and keyless. Sources: MFN.se, Cision, filings.xbrl.org (ESEF), SEC XBRL.
+Free and keyless. Sources: MFN.se, Cision, filings.xbrl.org (ESEF). Coverage
+is European (Nordic/French ESEF) issuers only.
 Python 3 standard library only.
 """
 import argparse
@@ -214,28 +214,6 @@ def months_span(start, end):
     if end != month_end(end.year, end.month):
         return None
     return (end.year - start.year) * 12 + (end.month - start.month) + 1
-
-
-def snap_to_months(start, end):
-    """Pull a 52/53-week fiscal period onto month boundaries, or refuse.
-
-    US filers on a 52/53-week calendar close on a weekday: Apple's third
-    quarter of 2025 runs 30 March to 28 June. Measured in calendar months that
-    is nothing at all, and a strict month test silently discards every
-    quarterly fact Apple has ever filed. Snapping is safe only within a week -
-    beyond that the period genuinely is not a quarter.
-    """
-    if start is None or end is None:
-        return None, None
-    ends = [month_end(end.year, end.month), end.replace(day=1) - DAY]
-    e = min(ends, key=lambda x: abs((x - end).days))
-    if abs((e - end).days) > 7:
-        return None, None
-    starts = [start.replace(day=1), month_end(start.year, start.month) + DAY]
-    st = min(starts, key=lambda x: abs((x - start).days))
-    if abs((st - start).days) > 7:
-        return None, None
-    return st, e
 
 
 def fy_bounds(date, fye_md):
@@ -755,7 +733,7 @@ class Obs(object):
         self.report_title = report_title
         self.report_url = report_url
         # Publication dates arrive as dates from the text path and as strings
-        # from ESEF and SEC. One representation, or every comparison is a bug.
+        # from ESEF. One representation, or every comparison is a bug.
         self.published = (published.isoformat() if isinstance(published, datetime.date)
                           else (str(published)[:10] if published else None))
         self.source_line = source_line
@@ -1407,7 +1385,7 @@ def pick_obs(ledger, metric, start, end, as_of=None):
     the newest restatement that was actually known by that date - without it,
     a restatement filed after `as_of` could be handed back on a run that is
     supposed to be blind to anything published after that date (see
-    cover_window(), which has the same gap on the SEC path).
+    cover_window(), which has the same gap).
     """
     rows = ledger.get((metric, start.isoformat(), end.isoformat()))
     if not rows:
@@ -1473,9 +1451,9 @@ def cover_window(ledger, metric, start, end, as_of=None, allow_synthetic=True):
     `as_of` gates every candidate piece to what was actually known by that
     date. Without it (the default, so every existing call keeps its old
     behaviour), this always took rows[0] - the newest restatement on record,
-    regardless of when it was published - which is exactly how the SEC path
-    (sec_observations() is never pre-filtered by as_of the way the text path
-    is in main()) leaked a later filing into a TTM run for a past as-of date.
+    regardless of when it was published - which is exactly how an
+    unfiltered observation source could leak a later filing into a TTM run
+    for a past as-of date.
     """
     pieces = []
     cursor = end
@@ -1534,8 +1512,8 @@ def rank_verification(v):
     return order.get(v, 3)
 
 
-SOURCE_FOR = {"mfn": "mfn", "cision": "cision", "esef": "esef", "sec": "sec_xbrl"}
-TIER_OF = {"esef": 1, "sec": 1, "mfn": 2, "cision": 2}
+SOURCE_FOR = {"mfn": "mfn", "cision": "cision", "esef": "esef"}
+TIER_OF = {"esef": 1, "mfn": 2, "cision": 2}
 
 
 def assemble(ledger, metric, fye_md, as_of, warnings, anchor_end=None):
@@ -1834,55 +1812,6 @@ def _num(value):
 
 
 # ==========================================================================
-# US filers: quarterly XBRL, no prose parsing needed.
-# ==========================================================================
-
-def sec_observations(symbol):
-    sec = _load("sec_fundamentals")
-    cik, name = sec.resolve(symbol)
-    facts = sec.get("%s/api/xbrl/companyfacts/CIK%s.json" % (sec.BASE, cik))
-    out = []
-    wanted = {"revenue": "revenue", "operating_income": "operating_income",
-              "net_income": "net_income", "eps": "eps_diluted",
-              "gross_profit": "gross_profit", "cfo": "cfo"}
-    for metric, key in wanted.items():
-        for tag in sec.CONCEPTS.get(key, []):
-            hit = False
-            for ns in ("us-gaap", "ifrs-full"):
-                node = facts.get("facts", {}).get(ns, {}).get(tag)
-                if not node:
-                    continue
-                unit, rows = sec.pick_unit(node["units"])
-                claimed = {}
-                for r in rows:
-                    if "start" not in r or "end" not in r:
-                        continue
-                    start, end = d(r["start"]), d(r["end"])
-                    if months_span(start, end) is None:
-                        start, end = snap_to_months(start, end)
-                        if start is None:
-                            continue
-                    span = months_span(start, end)
-                    if span not in (3, 6, 9, 12):
-                        continue
-                    k = (start, end)
-                    prev = claimed.get(k)
-                    if prev is None or (r.get("filed") or "") >= (prev.get("filed") or ""):
-                        claimed[k] = r
-                for (start, end), r in claimed.items():
-                    out.append(Obs(metric, start, end, r["val"],
-                                   unit if unit not in ("shares",) else None,
-                                   "sec", "SEC %s %s" % (r.get("form"), r.get("accn")),
-                                   "https://www.sec.gov/cgi-bin/browse-edgar?action="
-                                   "getcompany&CIK=%s" % cik,
-                                   r.get("filed"), "xbrl tag %s" % tag))
-                hit = True
-            if hit:
-                break
-    return out, name
-
-
-# ==========================================================================
 # Output
 # ==========================================================================
 
@@ -1987,7 +1916,7 @@ def print_result(result, fact, explain, fye_md):
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("company", nargs="?", help="company name, or a US ticker with --sec")
+    ap.add_argument("company", nargs="?", help="company name")
     ap.add_argument("--metric", help="one metric, e.g. revenue, net_income, eps")
     ap.add_argument("--json", action="store_true", dest="as_json")
     ap.add_argument("--as-of", dest="as_of", help="ignore anything published after "
@@ -1995,7 +1924,6 @@ def main():
     ap.add_argument("--explain", action="store_true", help="show the period arithmetic")
     ap.add_argument("--country", default="SE", help="ISO-2 country for the ESEF lookup")
     ap.add_argument("--mfn-slug"), ap.add_argument("--cision-slug"), ap.add_argument("--lei")
-    ap.add_argument("--sec", action="store_true", help="US filer: use SEC quarterly XBRL")
     ap.add_argument("--reports", type=int, default=10,
                     help="report release bodies to read (default 10)")
     ap.add_argument("--no-esef", action="store_true",
@@ -2018,88 +1946,74 @@ def main():
     esef_ends = []
     label = args.company
 
-    if args.sec:
+    who = locate(args.company, args.country, args.mfn_slug, args.cision_slug,
+                args.lei, use_esef=not args.no_esef)
+    warnings += who.get("notes") or []
+    if who.get("mfn_slug"):
+        reports += harvest_mfn(who["mfn_slug"])
+    if not reports and who.get("cision_slug"):
+        reports += harvest_cision(who["cision_slug"], max_bodies=args.reports)
+    if not reports:
+        print("DATA NOT AVAILABLE: no interim or year-end report releases were "
+              "found for %r." % args.company)
+        print("  MFN slug tried:    %s" % (who.get("mfn_slug") or "none resolved"))
+        print("  Cision slug tried: %s" % (who.get("cision_slug") or "none resolved"))
+        print("Pass --mfn-slug / --cision-slug explicitly if the name did not "
+              "resolve. Without interim reports there is no TTM, only the "
+              "annual figure - and its age is the whole problem.")
+        return 1
+    reports = [r for r in reports if (r["published"] or "9999") <= as_of][:args.reports]
+    label = who.get("mfn_name") or who.get("cision_name") or who.get("esef_name") or label
+
+    if who.get("lei"):
+        esef_obs, esef_ends = esef_observations(who["lei"])
+        observations += esef_obs
+
+    fye_md, fye_source, fye_warn = detect_fye(reports, esef_ends)
+    warnings += fye_warn
+
+    # company_resolve answers the same question from wider evidence: it
+    # parses the year-end report's own period range for issuers with no
+    # ESEF filing at all. Two modules disagreeing about a fiscal year is
+    # worse than either answer, so it is asked before refusing - but only
+    # then, because it is slow. It is called out of process because it
+    # exposes its result through its CLI, not through a stable function.
+    if fye_md is None:
         try:
-            observations, label = sec_observations(args.company)
-        except SystemExit as exc:
-            print("DATA NOT AVAILABLE: %s" % exc)
-            return 1
-        fye_md, fye_source = None, "SEC fiscal period ends"
-        if observations:
-            annual = [o for o in observations if o.months == 12]
-            if annual:
-                end = max(o.end for o in annual)
-                fye_md = "%02d-%02d" % (end.month, end.day)
-                fye_source = "the latest twelve-month period in SEC XBRL (%s)" % end
-    else:
-        who = locate(args.company, args.country, args.mfn_slug, args.cision_slug,
-                     args.lei, use_esef=not args.no_esef)
-        warnings += who.get("notes") or []
-        if who.get("mfn_slug"):
-            reports += harvest_mfn(who["mfn_slug"])
-        if not reports and who.get("cision_slug"):
-            reports += harvest_cision(who["cision_slug"], max_bodies=args.reports)
-        if not reports:
-            print("DATA NOT AVAILABLE: no interim or year-end report releases were "
-                  "found for %r." % args.company)
-            print("  MFN slug tried:    %s" % (who.get("mfn_slug") or "none resolved"))
-            print("  Cision slug tried: %s" % (who.get("cision_slug") or "none resolved"))
-            print("Pass --mfn-slug / --cision-slug explicitly if the name did not "
-                  "resolve. Without interim reports there is no TTM, only the "
-                  "annual figure - and its age is the whole problem.")
-            return 1
-        reports = [r for r in reports if (r["published"] or "9999") <= as_of][:args.reports]
-        label = who.get("mfn_name") or who.get("cision_name") or who.get("esef_name") or label
+            proc = subprocess.run(
+                [sys.executable, os.path.join(HERE, "company_resolve.py"),
+                 args.company, "--json"],
+                capture_output=True, text=True, timeout=300)
+            candidate = None
+            if proc.stdout.strip():
+                record = json.loads(proc.stdout)
+                candidate = record.get("fiscal_year_end")
+            if candidate and re.match(r"^\d{2}-\d{2}$", str(candidate)):
+                fye_md = candidate
+                fye_source = "company_resolve: %s" % (
+                    record.get("fiscal_year_end_source") or "issuer report")
+                warnings.append(
+                    "fiscal year end came from company_resolve, not from the "
+                    "reports read here. Confirm it against the report itself.")
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            warnings.append("company_resolve fallback unavailable (%s)" % exc)
 
-        if who.get("lei"):
-            esef_obs, esef_ends = esef_observations(who["lei"])
-            observations += esef_obs
+    if fye_md is None:
+        print("REFUSING: %s" % (fye_warn[-1] if fye_warn else "fiscal year end unknown"))
+        print("Every term of a TTM is defined relative to the fiscal year. "
+              "Guessing 31 December is how a March-year-end issuer's TTM ends "
+              "up three months out with a citation that looks correct.")
+        return 2
 
-        fye_md, fye_source, fye_warn = detect_fye(reports, esef_ends)
-        warnings += fye_warn
-
-        # company_resolve answers the same question from wider evidence: it
-        # parses the year-end report's own period range for issuers with no
-        # ESEF filing at all. Two modules disagreeing about a fiscal year is
-        # worse than either answer, so it is asked before refusing - but only
-        # then, because it is slow. It is called out of process because it
-        # exposes its result through its CLI, not through a stable function.
-        if fye_md is None:
-            try:
-                proc = subprocess.run(
-                    [sys.executable, os.path.join(HERE, "company_resolve.py"),
-                     args.company, "--json"],
-                    capture_output=True, text=True, timeout=300)
-                candidate = None
-                if proc.stdout.strip():
-                    record = json.loads(proc.stdout)
-                    candidate = record.get("fiscal_year_end")
-                if candidate and re.match(r"^\d{2}-\d{2}$", str(candidate)):
-                    fye_md = candidate
-                    fye_source = "company_resolve: %s" % (
-                        record.get("fiscal_year_end_source") or "issuer report")
-                    warnings.append(
-                        "fiscal year end came from company_resolve, not from the "
-                        "reports read here. Confirm it against the report itself.")
-            except (OSError, ValueError, subprocess.SubprocessError) as exc:
-                warnings.append("company_resolve fallback unavailable (%s)" % exc)
-
-        if fye_md is None:
-            print("REFUSING: %s" % (fye_warn[-1] if fye_warn else "fiscal year end unknown"))
-            print("Every term of a TTM is defined relative to the fiscal year. "
-                  "Guessing 31 December is how a March-year-end issuer's TTM ends "
-                  "up three months out with a citation that looks correct.")
-            return 2
-
-        for r in reports:
-            obs, warn = extract_observations(r["text"], r["title"], d(r["published"]),
-                                             fye_md, r["source"], r["url"])
-            observations += obs
-            warnings += warn
-            if DISCONTINUED_RE.search(r["text"] or ""):
-                warnings.append("%s discusses discontinued operations; check that "
-                                "every term of the TTM is on the same basis"
-                                % r["title"][:70])
+    for r in reports:
+        obs, warn = extract_observations(r["text"], r["title"], d(r["published"]),
+                                         fye_md, r["source"], r["url"])
+        observations += obs
+        warnings += warn
+        if DISCONTINUED_RE.search(r["text"] or ""):
+            warnings.append("%s discusses discontinued operations; check that "
+                            "every term of the TTM is on the same basis"
+                            % r["title"][:70])
 
     if fye_md is None:
         print("REFUSING: fiscal year end unknown; nothing computed.")
@@ -2117,7 +2031,7 @@ def main():
         return 1
 
     text_ends = [d(k[2]) for k, rows in ledger.items()
-                 if rows[0].source in ("mfn", "cision", "sec")
+                 if rows[0].source in ("mfn", "cision")
                  and (rows[0].published or "") <= as_of]
     anchor_end = max(text_ends) if text_ends else None
 
@@ -2149,10 +2063,7 @@ def main():
         print("latest ESEF annual data: %s  -  %d days (%.0f months) stale. "
               "That staleness is why this module exists."
               % (esef_ends[0], stale, stale / 30.44))
-    if args.sec:
-        print("source: SEC XBRL companyfacts, %d period facts" % len(observations))
-    else:
-        print("reports read: %d" % len(reports))
+    print("reports read: %d" % len(reports))
     for r in reports[:6]:
         print("   %s  %-62.62s  %s" % (r["published"], r["title"], r["source"]))
     if len(reports) > 6:
@@ -2163,15 +2074,10 @@ def main():
     for res in results:
         print_result(res, facts.get(res["metric"]), args.explain, fye_md)
     print()
-    if args.sec:
-        print("These come from tagged XBRL, so the periods are stated rather than")
-        print("inferred. The only judgement applied is snapping a 52/53-week fiscal")
-        print("quarter onto month boundaries so it can be added up.")
-    else:
-        print("Interim figures here are parsed out of press-release prose, not out of a")
-        print("tagged filing. Each one prints the line it came from - read the line. If")
-        print("a period or a scale looks wrong, it is wrong, and the annual figure with")
-        print("its age stated is the honest fallback.")
+    print("Interim figures here are parsed out of press-release prose, not out of a")
+    print("tagged filing. Each one prints the line it came from - read the line. If")
+    print("a period or a scale looks wrong, it is wrong, and the annual figure with")
+    print("its age stated is the honest fallback.")
     return 0
 
 
@@ -2427,13 +2333,6 @@ def selftest():
                    anchor_end=datetime.date(2026, 6, 30))
     assert res["state"] == State.DATA_STALE.value, res
     assert res["value"] is None and res["fallback"]["value"] == 30.0
-    ok += 2
-
-    # -- 52/53-week US quarters snap onto month boundaries; a half-year does not
-    assert snap_to_months(datetime.date(2025, 3, 30), datetime.date(2025, 6, 28)) == \
-        (datetime.date(2025, 4, 1), datetime.date(2025, 6, 30))
-    assert snap_to_months(datetime.date(2025, 3, 12), datetime.date(2025, 6, 28)) == \
-        (None, None)
     ok += 2
 
     # -- rounding in per-share figures is not a conflict; 1% in money is

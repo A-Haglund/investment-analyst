@@ -20,10 +20,10 @@ tiers — which one wins when two disagree.
 
 | Order | Source | Why it ranks here |
 |---|---|---|
-| 1 | **Audited annual report** (årsredovisning, 10-K, Geschäftsbericht) | Audited, complete, includes the notes |
-| 2 | **ESEF / SEC XBRL tagged filing** | Same document, machine-readable, but only primary statements are tagged |
+| 1 | **Audited annual report** (årsredovisning, Geschäftsbericht) | Audited, complete, includes the notes |
+| 2 | **ESEF tagged filing** | Same document, machine-readable, but only primary statements are tagged |
 | 3 | **Interim report PDF** | Company-prepared, usually unaudited — the notes are thinner |
-| 4 | **Regulatory press release** (MFN, 8-K, Cision) | Same figures, management framing, no notes |
+| 4 | **Regulatory press release** (MFN, Cision) | Same figures, management framing, no notes |
 | 5 | **Exchange or regulator register** | Authoritative for its own field only — shares, insiders, short positions |
 | 6 | **Quote feeds** | Prices only. Never a source for fundamentals |
 | 7 | **Financial press** | Context and dates. Never a figure that enters the model |
@@ -64,7 +64,6 @@ Where both exist for the same fiscal year, compare:
 | Market | Path A | Path B |
 |---|---|---|
 | Sweden / Nordics / France | `esef_fundamentals.py` (tagged XBRL) | the annual report PDF, or the MFN year-end release |
-| US | `sec_fundamentals.py` (tagged XBRL) | the 10-K itself, or the 8-K earnings release |
 | First North / Spotlight | `mfn_news.py --figures` | the report PDF behind the same release |
 
 Agreement is the expected result. **A mismatch above 1% is a finding**, not a

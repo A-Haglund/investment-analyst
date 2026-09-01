@@ -112,6 +112,13 @@ THE PIPELINE
      split to "no corporate action" often enough to pass a real crash
      through as a candidate.
 
+     This runs pre-open (see PRE-OPEN SCHEDULING below), so "inside the
+     return window" is itself split at the candidate's own last completed
+     close: only an action on or before that close can make the return a
+     technical artefact; an action effective AFTER it (an ex-date or split
+     landing this morning) is new and unpriced, reported separately under
+     `since_last_close`, never folded into `has_breaking_action`.
+
   6. REGULATORY NEWS.  mfn_news.py, resolved via venues_se.mfn_identity -
      which accepts only an MFN entity whose OWN ISIN or LEI matches the one
      FIRDS gave this candidate, never a bare name search's top hit (a bare
@@ -122,6 +129,23 @@ THE PIPELINE
      classified", covers a name this check could not resolve or fetch at
      all (a dead endpoint, an unresolvable identity): that is NOT evidence
      of no news, and is never printed under the same heading as one.
+
+     PRE-OPEN SCHEDULING.  This runs as a scheduled job before the Stockholm
+     09:00 open, and Swedish issuers publish in a heavy wave from roughly
+     06:30 to 08:30 - so "the window" is split at the candidate's own last
+     completed close (the same date its return was measured to, which is
+     NOT today when run pre-open). A release on or before that close can
+     explain the fall (`has_release`, feeding fell_on_information/
+     fell_on_flows); a release strictly AFTER it - up to now - is new,
+     unpriced information that CANNOT explain a fall that predates it, so it
+     is never folded into `has_release`. It is reported separately as
+     `since_last_close` (count, titles, timestamps) on every candidate in
+     every bucket (technical moves included), surfaced as its own summary
+     line and a per-candidate marker in the text output - the single most
+     time-critical thing a reader running this before the open needs to see
+     first. A failed check reports `since_last_close` as `not checked` too,
+     same as the main window - never silently "no news". Both windows come
+     from ONE identity resolution and ONE fetch, never a second round-trip.
 
   7. SIGNALS.  short_se.aggregated() plus one shared FI file download (never
      one per candidate - that would defeat FI's own hourly cache) for the
@@ -141,8 +165,12 @@ name that is, in fact, ESEF-covered.
 
 AS-OF DATES.  Price is the last completed session in the fetched bars, short
 interest is FI's own publication date read from its file (never the fetch
-time), and the regulatory-news window is the explicit [from, to] dates
-checked. A single headline "as of" date would be false precision.
+time), and the regulatory-news/corporate-action "explains the fall" window
+runs from the explicit `from` date up to (and including) that same last
+completed close - never up to today, which is what a pre-open run's `to`
+date would otherwise be. Each axis also separately reports what happened
+SINCE that close, up to now, under its own `since_last_close`. A single
+headline "as of" date would be false precision.
 
 OPTIONAL INTEGRATION POINT.  If a sibling script exposes
 `venues_se.ngm_turnover(date)` (feature-detected via `hasattr` - absent is

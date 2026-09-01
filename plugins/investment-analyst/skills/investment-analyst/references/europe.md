@@ -1,8 +1,9 @@
 # European coverage — Nordics, Germany, France
 
-Scope of this skill: **US, the Nordics (SE, NO, DK, FI), Germany and France.**
+Scope of this skill: **the Nordics (SE, NO, DK, FI), Germany and France.**
 Other European markets work through the same ESEF route where indexed, but they
-are not the target and are not verified.
+are not the target and are not verified. US equities are out of scope — see
+`SKILL.md` §3.
 
 Sweden has its own file — `sweden.md` — because it has the deepest free source
 chain. This file covers the rest.
@@ -11,7 +12,6 @@ chain. This file covers the rest.
 
 | Market | Structured data | Releases and reports | Insiders |
 |---|---|---|---|
-| **US** | `sec_fundamentals.py` (XBRL) | SEC EDGAR 8-K, IR | Form 4 on EDGAR |
 | **Sweden** | `esef_fundamentals.py` | `mfn_news.py` | `insider_se.py` |
 | **Norway** | `esef_fundamentals.py --country NO` | Oslo Børs NewsWeb; MFN | Oslo Børs / Finanstilsynet |
 | **Denmark** | `esef_fundamentals.py --country DK` | MFN; Nasdaq Copenhagen | Finanstilsynet |
@@ -175,14 +175,14 @@ Rules:
 
 ## Accounting basis
 
-Regulated-market issuers in all of these markets report under **IFRS**, the US
-under **US GAAP**. MTF issuers across the Nordics may report under national
-GAAP instead of IFRS — Swedish K3 is the case this plugin documents in depth
-(`sweden.md`'s "Accounting basis" section), but Euronext Growth Oslo and First
-North Denmark and Finland issuers commonly report under Norwegian, Danish or
-Finnish national GAAP as well. For a Norwegian, Danish or Finnish MTF issuer,
-read the accounting-principles note before assuming IFRS. Before any
-cross-border comparison, read the lease section in `fundamentals.md` — IFRS 16
-inflates EBITDA relative to US GAAP operating leases (and is simply absent
-under K3), and EV/EBITDA comparisons across frameworks are not like for like.
-Prefer **EV/EBIT**.
+Regulated-market issuers in all of these markets report under **IFRS**. MTF
+issuers across the Nordics may report under national GAAP instead — Swedish
+K3 is the case this plugin documents in depth (`sweden.md`'s "Accounting
+basis" section), but Euronext Growth Oslo and First North Denmark and Finland
+issuers commonly report under Norwegian, Danish or Finnish national GAAP as
+well. For a Norwegian, Danish or Finnish MTF issuer, read the
+accounting-principles note before assuming IFRS. Before any cross-framework
+comparison, read the lease section in `fundamentals.md` — IFRS 16 inflates
+EBITDA relative to a framework that leaves operating leases off balance sheet
+(K3 among them), and EV/EBITDA comparisons across frameworks are not like for
+like. Prefer **EV/EBIT**.

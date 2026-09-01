@@ -75,7 +75,7 @@ class Mode(str, enum.Enum):
 # --------------------------------------------------------------------------
 
 TIER = {
-    "annual_report": 1, "esef": 1, "sec_xbrl": 1, "interim_report": 1,
+    "annual_report": 1, "esef": 1, "interim_report": 1,
     "fi_register": 1, "nasdaq_reference": 1, "riksbank": 1, "scb": 1,
     "esma_firds": 1, "gleif": 1, "vies": 1, "ecb": 1, "eurostat": 1,
     "company_ir": 1,
@@ -90,7 +90,6 @@ ORIGIN = {
     "annual_report": "issuer_filing",
     "interim_report": "issuer_filing",
     "esef": "issuer_filing",        # the tagged rendering of the same document
-    "sec_xbrl": "issuer_filing",
     "company_ir": "issuer_disclosure",
     "mfn": "issuer_disclosure",
     "cision": "issuer_disclosure",

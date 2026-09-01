@@ -12,7 +12,9 @@ obvious advice.
 A plugin for Claude (Anthropic's assistant) that performs fundamental equity
 research and ends in a BUY / HOLD / SELL recommendation with a fair value per
 share. It is optimised for **Swedish listed equities**, with secondary support
-for US, Nordic (Norway, Denmark, Finland), German and French issuers.
+for Nordic (Norway, Denmark, Finland), German and French issuers. US equities
+are deliberately out of scope — SEC EDGAR requires an identifying contact
+address on every request, and this system sends none.
 
 It is not a trading system, a screener product or a data vendor. It is a
 structured research process that a language model follows, backed by 23 Python
@@ -110,7 +112,6 @@ cost).
 | `earnings_quality.py` | 919 | Cash-conversion and accrual ratios that separate reported profit from actual cash |
 | `mfn_news.py` | 647 | Nordic regulatory releases; extracts headline figures from release text |
 | `ownership_se.py` | 634 | Swedish fund ownership per ISIN, quarterly, with concentration and trend |
-| `sec_fundamentals.py` | 453 | US financials from SEC EDGAR XBRL |
 | `finfact.py` | 454 | The shared provenance, temporal-validity and corroboration core (`FinancialFact`, `Verification`, `corroborate()`) every other script imports; not run directly except `--selftest` |
 | `verify_filing.py` | 437 | Restatement detection, internal statement ties, release cross-check |
 | `esef_fundamentals.py` | 405 | IFRS annual financials from ESEF Inline XBRL |
@@ -135,7 +136,6 @@ cost).
   disclosure that is the authoritative dilution log)
 - **ESEF / filings.xbrl.org** — IFRS annual reports as tagged Inline XBRL for
   EU/EEA regulated-market issuers
-- **SEC EDGAR XBRL** — US filers
 - **ESMA FIRDS** — ISIN ↔ LEI ↔ MIC ↔ CFI resolution, and the anchor for venue
   identity where a name search on a news wire is unreliable
 - **Riksbanken SWEA** — Swedish policy rate, 10-year government bond, FX

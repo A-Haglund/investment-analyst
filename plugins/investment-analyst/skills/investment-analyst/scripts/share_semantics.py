@@ -53,8 +53,6 @@ WHERE EACH FIELD COMES FROM
                               IFRS-standard synonyms) or, where ESEF Phase 1
                               leaves the EPS note untagged, DERIVED as
                               net_income / eps_basic and labelled as derived.
-                              sec_fundamentals's WeightedAverageNumberOf*
-                              concepts serve the same field for a US filer.
   diluted_shares               the diluted twin of the row above.
 
 The exchange and the issuer's own disclosure are DIFFERENT ORIGIN GROUPS in
@@ -106,10 +104,6 @@ try:
     import esef_fundamentals
 except Exception:                                            # pragma: no cover
     esef_fundamentals = None
-try:
-    import sec_fundamentals
-except Exception:                                            # pragma: no cover
-    sec_fundamentals = None
 try:
     import company_resolve
 except Exception:                                            # pragma: no cover
@@ -359,7 +353,7 @@ def registered_shares_fact(query, bodies=40, pages=3):
 
 
 # ---------------------------------------------------------------------------
-# weighted_average_shares / diluted_shares - ESEF (IFRS) or SEC (US-GAAP)
+# weighted_average_shares / diluted_shares - ESEF (IFRS)
 # ---------------------------------------------------------------------------
 
 # Legal-form tokens stripped before comparing two company names. A plain
@@ -614,55 +608,6 @@ def weighted_average_and_diluted_facts(company_name, filings=1, known_lei=None):
     return out
 
 
-def sec_weighted_average_and_diluted_facts(ticker):
-    """Same two fields for a US filer. Wired for completeness; none of the
-    Nordic test companies are SEC filers, so this normally reports DATA NOT
-    AVAILABLE for them - which is the CORRECT answer, not a failure."""
-    out = {"basic": (None, {}), "diluted": (None, {})}
-    if sec_fundamentals is None:
-        reason = "sec_fundamentals.py not importable"
-        out["basic"] = (None, {"reason": reason})
-        out["diluted"] = (None, {"reason": reason})
-        return out
-    if not os.environ.get("SEC_USER_AGENT", "").strip():
-        reason = ("SEC_USER_AGENT not set - required by SEC's fair-access policy. "
-                  "Not attempted.")
-        out["basic"] = (None, {"reason": reason})
-        out["diluted"] = (None, {"reason": reason})
-        return out
-    try:
-        cik, name = sec_fundamentals.resolve(ticker)
-        facts = sec_fundamentals.get("%s/api/xbrl/companyfacts/CIK%s.json"
-                                     % (sec_fundamentals.BASE, cik))
-    except SystemExit as e:
-        reason = str(e)
-        out["basic"] = (None, {"reason": reason})
-        out["diluted"] = (None, {"reason": reason})
-        return out
-    except Exception as e:
-        reason = "SEC EDGAR lookup failed: %s" % e
-        out["basic"] = (None, {"reason": reason})
-        out["diluted"] = (None, {"reason": reason})
-        return out
-
-    def build(metric, label):
-        found = sec_fundamentals.series(facts, sec_fundamentals.CONCEPTS[metric], annual=True)
-        if not found:
-            return None, {"reason": "%s: %s not tagged for CIK %s" % (NA, metric, cik)}
-        end = sorted(found)[-1]
-        r = found[end]
-        fact = FinancialFact(
-            label, r["val"], source="sec_xbrl", period_end=end,
-            publication_date=r.get("filed"), unit="shares",
-            source_detail="%s (tag %s, %s, accession %s)" % (name, r["tag"], r["form"], r["accn"]),
-            freshness_key="annual_financials")
-        return fact, {"concept": r["tag"], "period_end": end, "cik": cik}
-
-    out["basic"] = build("shares_basic", "weighted_average_shares")
-    out["diluted"] = build("shares_diluted", "diluted_shares")
-    return out
-
-
 # ---------------------------------------------------------------------------
 # shares_outstanding / treasury_shares - the two fields no free Nordic source
 # publishes as a point-in-time balance. Reported absent, on purpose.
@@ -718,16 +663,6 @@ def build_reconciliation(query, bodies=40, esef_filings=1):
                                             known_lei=identity.get("lei"))
     weighted_fact, weighted_detail = wa["basic"]
     diluted_fact, diluted_detail = wa["diluted"]
-
-    # If ESEF found nothing at all (no LEI / not covered), it costs nothing to
-    # also try SEC in case this is in fact a dual-listed US filer.
-    if weighted_fact is None and diluted_fact is None:
-        root = (classes[0]["symbol"] or "").split()[0] if classes else query
-        sec_wa = sec_weighted_average_and_diluted_facts(root)
-        if sec_wa["basic"][0] is not None:
-            weighted_fact, weighted_detail = sec_wa["basic"]
-        if sec_wa["diluted"][0] is not None:
-            diluted_fact, diluted_detail = sec_wa["diluted"]
 
     treasury_detail, outstanding_detail = treasury_and_outstanding(registered_fact)
 

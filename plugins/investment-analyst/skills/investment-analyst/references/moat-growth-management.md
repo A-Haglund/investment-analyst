@@ -113,7 +113,6 @@ goodwill? Were buybacks executed at sensible valuations or at the peak?
   Meaningful ownership relative to the individual's net worth beats a large
   absolute number.
 - **Transactions**:
-  - US → Form 4 filings on EDGAR
   - Sweden → `scripts/insider_se.py --issuer "NAME" --months 12`
   - Germany, Norway, Denmark, Finland → BaFin, Finanstilsynet and
     Finanssivalvonta each run the equivalent PDMR register; France → AMF's
@@ -148,7 +147,8 @@ admitting overpayment.
 
 ### Compensation and incentives
 
-Read the proxy (DEF 14A) or the Swedish remuneration report. What are executives
+Read the Swedish remuneration report (ersättningsrapporten), or its
+equivalent in the issuer's own jurisdiction. What are executives
 actually paid for? Targets on revenue or adjusted EPS encourage empire-building
 and add-backs. Targets on ROIC, FCF per share or relative TSR align with owners.
 Note the gap between the metrics management is paid on and the metrics that

@@ -964,6 +964,227 @@ class RegulatoryNewsIdentityVerification(unittest.TestCase):
         self.assertIn("no MFN entity", result["note"])
 
 
+class RegulatoryNewsSplitAgainstLastClose(unittest.TestCase):
+    """THE FIX: this screen runs pre-open, and Swedish issuers publish in a
+    heavy wave 06:30-08:30 - before the return being classified was even
+    measured (it is measured to the LAST COMPLETED close, i.e. yesterday).
+    A release published this morning must never be read as explaining a
+    fall that predates it - that is causally backwards. The window is
+    split against `last_close_date` (the same date the candidate's own
+    return is measured to): [date_from, last_close_date] can explain the
+    fall; (last_close_date, date_to] is new, unpriced information, reported
+    separately under `since_last_close`, never folded into `has_release`.
+    """
+
+    LAST_CLOSE = "2026-08-28"          # the fall was measured to this close
+    TODAY = "2026-08-29"               # the script runs the morning after
+
+    @staticmethod
+    def _fakes(items):
+        class FakeVenuesSE(object):
+            @staticmethod
+            def mfn_identity(name, isin=None, lei=None, limit=30):
+                return {"slug": "target-ab", "isins": [], "leis": []}
+
+        class FakeMFN(object):
+            calls = {"identity": 0, "fetch": 0}
+
+            @staticmethod
+            def fetch_company_pages(slug, pages=2):
+                FakeMFN.calls["fetch"] += 1
+                return items
+
+            @staticmethod
+            def flatten(item):
+                content = item.get("content") or {}
+                props = item.get("properties") or {}
+                tags = props.get("tags") or []
+                return {"date": (content.get("publish_date") or "")[:19],
+                       "title": content.get("title"), "tags": tags,
+                       "regulatory": ":regulatory" in tags}
+
+        return FakeMFN, FakeVenuesSE
+
+    @staticmethod
+    def _mfn_item(publish_date, title, regulatory=True):
+        return {"content": {"publish_date": publish_date, "title": title},
+                "properties": {"tags": [":regulatory"] if regulatory else [], "lang": "en"},
+                "author": {"name": "Target AB", "slug": "target-ab"},
+                "url": "https://mfn.se/a/x"}
+
+    def _check(self, items):
+        FakeMFN, FakeVenuesSE = self._fakes(items)
+        real_mfn, real_venues = sd.mfn_news, sd.venues_se
+        sd.mfn_news, sd.venues_se = FakeMFN, FakeVenuesSE
+        try:
+            result = sd.check_regulatory_news("Target AB", "2026-08-01", self.LAST_CLOSE,
+                                              self.TODAY)
+        finally:
+            sd.mfn_news, sd.venues_se = real_mfn, real_venues
+        return result, FakeMFN
+
+    def test_release_published_after_last_close_does_not_explain_the_fall(self):
+        """This is the defect itself: a 07:15 release the morning AFTER the
+        last completed close must NOT put the candidate in
+        fell_on_information - the fall predates the release, so the release
+        cannot be its cause."""
+        result, _ = self._check([self._mfn_item("2026-08-29T07:15:00", "Profit warning")])
+        self.assertFalse(result["has_release"],
+                         "a release strictly after last_close_date must never count "
+                         "as explaining a fall already measured to that close")
+        self.assertEqual(result["items"], [])
+
+    def test_release_after_last_close_is_marked_since_last_close(self):
+        result, _ = self._check([self._mfn_item("2026-08-29T07:15:00", "Profit warning")])
+        since = result["since_last_close"]
+        self.assertEqual(since["status"], "checked")
+        self.assertEqual(since["count"], 1)
+        self.assertEqual(since["items"][0]["title"], "Profit warning")
+        self.assertEqual(since["items"][0]["date"], "2026-08-29T07:15:00")
+
+    def test_release_on_or_before_last_close_still_classifies_as_before(self):
+        """Regression guard: this fix must not change anything about a
+        release that already fell inside the explains-the-fall window."""
+        result, _ = self._check([self._mfn_item("2026-08-20T08:00:00", "Profit warning")])
+        self.assertTrue(result["has_release"])
+        self.assertEqual(len(result["items"]), 1)
+        self.assertEqual(result["items"][0]["date"], "2026-08-20")
+        self.assertEqual(result["since_last_close"]["count"], 0)
+
+        # A release ON the last close date itself is still "on or before".
+        same_day = self._check([self._mfn_item("2026-08-28T16:00:00", "Report")])[0]
+        self.assertTrue(same_day["has_release"])
+        self.assertEqual(same_day["since_last_close"]["count"], 0)
+
+    def test_candidate_with_both_an_explaining_and_a_fresh_release(self):
+        """An older release that explains the fall AND a fresh one this
+        morning must both be recognised: has_release True (from the old
+        one) AND since_last_close flagging the new one."""
+        result, _ = self._check([
+            self._mfn_item("2026-08-20T08:00:00", "Profit warning"),
+            self._mfn_item("2026-08-29T07:15:00", "Trading update"),
+        ])
+        self.assertTrue(result["has_release"])
+        self.assertEqual([i["title"] for i in result["items"]], ["Profit warning"])
+        self.assertEqual(result["since_last_close"]["count"], 1)
+        self.assertEqual(result["since_last_close"]["items"][0]["title"], "Trading update")
+
+    def test_untagged_release_after_last_close_does_not_count_as_regulatory(self):
+        result, _ = self._check([self._mfn_item("2026-08-29T07:15:00", "Marketing puff",
+                                                 regulatory=False)])
+        self.assertEqual(result["since_last_close"]["count"], 0)
+
+    def test_identity_resolved_once_and_only_one_fetch_is_made(self):
+        """Both windows must come out of ONE identity resolution and ONE
+        fetch - never a second round-trip to serve since_last_close."""
+        calls = {"identity": 0}
+
+        class CountingVenuesSE(object):
+            @staticmethod
+            def mfn_identity(name, isin=None, lei=None, limit=30):
+                calls["identity"] += 1
+                return {"slug": "target-ab", "isins": [], "leis": []}
+
+        FakeMFN, _ = self._fakes([
+            self._mfn_item("2026-08-20T08:00:00", "Profit warning"),
+            self._mfn_item("2026-08-29T07:15:00", "Trading update"),
+        ])
+        real_mfn, real_venues = sd.mfn_news, sd.venues_se
+        sd.mfn_news, sd.venues_se = FakeMFN, CountingVenuesSE
+        try:
+            sd.check_regulatory_news("Target AB", "2026-08-01", self.LAST_CLOSE, self.TODAY)
+        finally:
+            sd.mfn_news, sd.venues_se = real_mfn, real_venues
+        self.assertEqual(calls["identity"], 1, "identity must be resolved exactly once")
+        self.assertEqual(FakeMFN.calls["fetch"], 1, "only one fetch must be made per candidate")
+
+    def test_failed_fetch_reports_not_checked_for_both_windows_never_no_news(self):
+        class FakeVenuesSE(object):
+            @staticmethod
+            def mfn_identity(name, isin=None, lei=None, limit=30):
+                return {"slug": "target-ab", "isins": [], "leis": []}
+
+        class FailingMFN(object):
+            @staticmethod
+            def fetch_company_pages(slug, pages=2):
+                raise RuntimeError("simulated MFN outage")
+
+        real_mfn, real_venues = sd.mfn_news, sd.venues_se
+        sd.mfn_news, sd.venues_se = FailingMFN, FakeVenuesSE
+        try:
+            result = sd.check_regulatory_news("Target AB", "2026-08-01", self.LAST_CLOSE,
+                                              self.TODAY)
+        finally:
+            sd.mfn_news, sd.venues_se = real_mfn, real_venues
+        self.assertEqual(result["status"], "not checked")
+        self.assertEqual(result["since_last_close"]["status"], "not checked",
+                         "a failed check must report 'not checked' for BOTH windows - "
+                         "never present as if 'no news' had been confirmed")
+        self.assertNotIn("has_release", result,
+                         "an incomplete check must never assert a release verdict "
+                         "either way")
+
+
+class CorporateActionSplitAgainstLastClose(unittest.TestCase):
+    """Same reasoning as RegulatoryNewsSplitAgainstLastClose applied to
+    corporate actions: an ex-dividend date or a split EFFECTIVE this
+    morning is likewise not an explanation of a fall measured to
+    yesterday's close, and is likewise urgent, unpriced information."""
+
+    LAST_CLOSE = "2026-08-28"
+    TODAY = "2026-08-29"
+
+    class FakeCA(object):
+        BREAKS_PER_SHARE = {"SPLIT"}
+        ROWS = []
+
+        @staticmethod
+        def _norm(s):
+            return (s or "").strip().lower()
+
+        @staticmethod
+        def resolve_company(name):
+            return [{"company": name, "announcements_in_probe": 1}]
+
+        @staticmethod
+        def corporate_actions_between(company, date_from, date_to, pages=2):
+            return list(CorporateActionSplitAgainstLastClose.FakeCA.ROWS)
+
+        @staticmethod
+        def split_adjustment_factor(company, date_from, date_to, pages=3):
+            return {"confirmed_splits": [], "other_actions_in_window": []}
+
+    def _check(self, rows):
+        self.FakeCA.ROWS = rows
+        real = sd.corporate_actions
+        sd.corporate_actions = self.FakeCA
+        try:
+            return sd.check_corporate_actions("Target AB", "2026-08-01", self.LAST_CLOSE,
+                                              self.TODAY)
+        finally:
+            sd.corporate_actions = real
+
+    def test_action_effective_after_last_close_does_not_explain_the_fall(self):
+        result = self._check([{"date": "2026-08-29", "type": "SPLIT", "title": "10:1 split"}])
+        self.assertFalse(result["has_breaking_action"],
+                         "an action effective AFTER the last close must not be read as "
+                         "explaining a fall already measured to that close")
+        self.assertEqual(result["events"], [])
+
+    def test_action_after_last_close_is_marked_since_last_close(self):
+        result = self._check([{"date": "2026-08-29", "type": "SPLIT", "title": "10:1 split"}])
+        since = result["since_last_close"]
+        self.assertEqual(since["status"], "checked")
+        self.assertEqual(since["count"], 1)
+        self.assertEqual(since["events"][0]["type"], "SPLIT")
+
+    def test_action_on_or_before_last_close_still_classifies_as_before(self):
+        result = self._check([{"date": "2026-08-15", "type": "SPLIT", "title": "10:1 split"}])
+        self.assertTrue(result["has_breaking_action"])
+        self.assertEqual(len(result["events"]), 1)
+        self.assertEqual(result["since_last_close"]["count"], 0)
+
+
 # ---------------------------------------------------------------------------
 # full pipeline, end to end, every fetcher monkeypatched
 # ---------------------------------------------------------------------------
