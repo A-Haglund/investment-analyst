@@ -609,11 +609,14 @@ SEK 0,546 nu · rimligt värde 0,38-0,48 · Score 41/100 · Data Confidence 38/1
 
 **Äger du den redan:** trimma nu, låt Q3 och novemberoptionerna avgöra resten.
 
+**Horisont:** till Q3 den 13 november. Då avgörs om intäktstakten håller, och
+novemberoptionerna visar om utspädningen blir så stor som marknaden fruktar.
+
 Viktigast: Data Confidence 38/100. Bolaget är en MTF-notering utan ESEF, så
 siffrorna är lästa ur delårsrapportens prosa. Detta är en riktning, inte ett facit.
 ```
 
-Three rules govern the added blocks:
+Four rules govern the added blocks:
 
 - **`Talar för` / `Talar emot` compress evidence already presented.** No claim may
   appear there that is not established earlier in the analysis, exactly as the
@@ -632,6 +635,26 @@ Three rules govern the added blocks:
   the whole position before close". Name what to do now and what to wait for.
   This is the one line that turns an opinion into something actionable, and it
   is the bridge between `/analyze` and `/portfolio`.
+- **A `Horisont` date sourced from `horizon.py` carries its provenance inline.**
+  Write `[SINGLE SOURCE - tier 4, Avanza; overifierat mot bolaget]` on the same
+  line as the date. The script prints this automatically in its own output, but
+  the analyst composes the Swedish `Horisont` line by hand — and a disclosure
+  that survives only in the tool's output is a disclosure that gets dropped in
+  translation. A date whose tier is not recorded cannot be audited later.
+- **`Horisont` is mandatory at STANDARD and DEEP**, directly beneath `Äger du
+  den redan` (or in its place when that line does not apply). It is derived
+  from the trigger table already printed as `Bevakning` — not invented — and
+  states the nearest dated event that would resolve or break the thesis: the
+  next report, a financing deadline, an option window, a named catalyst.
+  Express it as a date or a quarter plus what happens then, never as a vague
+  duration ("6-12 months" says nothing about what ends the position).
+  `scripts/horizon.py` sources the next scheduled report date for a
+  Nordic-listed company where one can be found (see `references/portfolio.md`
+  for what it checked and why most free sources do not qualify). Where no
+  dated catalyst could be sourced, say so plainly —
+  `Horisont: DATA NOT AVAILABLE — ingen daterad katalysator kunde hittas` —
+  and still name what would settle the case, since a date being unknown does
+  not mean the catalyst is.
 
 One colour vocabulary, used by every command:
 

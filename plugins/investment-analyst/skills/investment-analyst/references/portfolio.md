@@ -92,6 +92,73 @@ and the portfolio downside figure reads `DATA NOT AVAILABLE` rather than
 computing a ratio. A missing bear case means no downside figure — not a falsely
 reassuring one. This is honest: you do not have a view on the worst case yet.
 
+## Holding horizon
+
+The closing block (`SKILL.md` §9) states the holding horizon as a dated
+event, never a duration. "Hold 6-12 months" says nothing about what would end
+the position; "hold until the next report" does, because that is when the
+thesis is actually tested. Derive it from the trigger table already built for
+`Bevakning` — the nearest trigger with a known date IS the horizon — not from
+a separate estimate.
+
+**What was checked, and why most free sources do not qualify.** Three free,
+keyless sources for a Nordic issuer's next scheduled report date were tried
+before writing `scripts/horizon.py`:
+
+- **Nasdaq Nordic's own API** (`api.nasdaq.com/api/nordic`, the base
+  `nordic_shares.py` already uses) carries no calendar or events endpoint at
+  all — verified live against a real orderbookId, every plausible path
+  (`/company-events`, `/calendar`, `/events`, `/reports`,
+  `/corporate-actions`, and more) returns 404. Its `/info` and `/summary`
+  endpoints carry price and segment data only.
+- **MFN** does carry a genuine "Finansiell kalender" / "Financial calendar"
+  regulatory release for many issuers (confirmed live for Nordea Bank,
+  SpareBank 1 Østlandet and several others), but it is not a reliable
+  programmatic source: it is not universal — a nine-year, 600-item check of
+  KebNi (First North Sweden) found none, ever, only occasional single-report
+  previews — and where it does exist the dates sit in free-text Swedish,
+  Norwegian, Finnish or English prose mixing "22 april 2027", "04.11.2026"
+  and "vecka 8, 2027" in the same release. Parsing that reliably across
+  issuers is exactly the fragile scraper this toolkit exists to avoid.
+- **The issuer's own IR site** (`ir_discovery.py`) already locates the
+  financial-calendar *page*, but deliberately reports only its URL — the page
+  is often JavaScript-rendered, and `ir_discovery.py`'s policy of never
+  claiming past what a crawl actually answered is correct and is not
+  overridden here.
+
+**The source that does work.** `ir_discovery.py`'s Avanza cross-check already
+pulls `companyEvents.events` from Avanza's market-guide API: a structured,
+dated, typed calendar (interim report, year-end report, general meeting,
+extraordinary general meeting, each with an ISO date and a confirmed flag).
+Verified live against a large cap (Volvo) and First North micro-caps (KebNi,
+NanoEcho, Gabather) alike. The raw feed carries seven to nine events of which
+two to four are future-dated — Volvo returns two, KebNi four, Evolution three —
+and no parsing is required, because the feed is already JSON.
+`scripts/horizon.py` reuses that route and returns the nearest future event.
+
+Avanza is a broker redistributing licensed data, not the issuer or a regulator,
+and `/_api/` is the website's own undocumented XHR backend rather than a
+published API. So the honest label is **`SINGLE SOURCE`, tier 4** — not
+"cross-check". A cross-check is a second opinion on a figure that has a primary
+source; here there is no primary, and calling it one would be the contradiction
+this file exists to prevent. `horizon.py` prints
+`[SINGLE SOURCE - tier 4, Avanza; unverified against the issuer]` on the date
+line itself, and any line that carries the date onward must carry that with it.
+
+This is the one place the plugin depends on an unofficial endpoint as a sole
+source. It is accepted because a calendar date is not a financial figure and
+because `www.avanza.se/robots.txt` carries no `Disallow` at all — but the
+issuer's own "Finansiell kalender" page remains the authority, and the Avanza
+date is a lead to verify whenever a live decision hangs on it.
+
+**When no dated event can be sourced** — a name Avanza does not carry, or a
+calendar with nothing scheduled — `horizon.py` returns `DATA NOT AVAILABLE`
+with the reason, and the closing block says so plainly:
+`Horisont: DATA NOT AVAILABLE — ingen daterad katalysator kunde hittas`,
+followed by what would settle the case even though its date is unknown (a
+financing round, an option window, a regulatory decision). Never a guessed
+duration.
+
 ## Portfolio drivers and overlap detection
 
 The `sector=` and `driver=` tags in a holding's note field tell

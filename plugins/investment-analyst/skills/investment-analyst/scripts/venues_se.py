@@ -24,6 +24,19 @@ analytical errors:
      and KebNi (First North) have none at all. So "NGM" alone is never a
      sufficient answer - the segment is what decides.
 
+ONE MORE ASSUMPTION IN HERE WAS WRONG AND HAS BEEN CORRECTED: this file used
+to imply, by never mentioning one, that no free price or turnover source
+exists for XNGM or NSME. It does. NGM's delayed/post-trade feed - a sibling
+of the delayed/pre-trade bid/ask snapshot ngm_symbols() reads, and not the
+same endpoint - carries every trade actually executed on every NGM segment,
+with 'Venue of execution' splitting XNGM and NSME cleanly from NMTF (NGM's
+ETP and warrant segment, not the listed equity universe this script covers).
+Verified 2026-09-01: 1,413 XNGM trades and 2,633 NSME trades on 2026-08-31
+alone. See ngm_turnover() and --ngm-turnover. Retention is 72 hours, so this
+is LAST-SESSION turnover and a last-trade price only - it can never build a
+history series, and it does not extend to XSAT or First North (NGM does not
+operate those venues).
+
 IDENTITY IS ANCHORED ON ESMA FIRDS, NOT ON A NAME SEARCH. FIRDS is the EU
 reference database every venue must report its instruments to, keyed by MIC,
 so it is the only free source that authoritatively answers "which venue".
@@ -39,11 +52,15 @@ Usage:
     python venues_se.py --venue ngm --list         # NGM Equity + Nordic SME
     python venues_se.py --venue first-north --list
     python venues_se.py "KebNi" --json
+    python venues_se.py --ngm-turnover              # last completed session
+    python venues_se.py --ngm-turnover 2026-08-31   # a specific date, if in the 72h window
 
 Free, no API key, no registration, no login, on every source used. Sources:
     ESMA FIRDS   https://registers.esma.europa.eu/solr/esma_registers_firds/select
     Spotlight    https://spotlightstockmarket.com/Umbraco/api/companyapi/GetCompanies
-    NGM          https://mdapi.ngm.se/delayed/pre-trade   (free for non-commercial use)
+    NGM pre-trade  https://mdapi.ngm.se/delayed/pre-trade   (free, non-commercial: tickers, bid/ask)
+    NGM post-trade https://mdapi.ngm.se/delayed/post-trade  (free, non-commercial: executed trades,
+                    MiFIR post-trade transparency - turnover and last price, see ngm_turnover())
     MFN          https://mfn.se/all/s.json
     ESEF index   https://filings.xbrl.org/api/filings
 
@@ -68,6 +85,28 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+
+# Sibling scripts are importable helpers, not subprocesses - same pattern as
+# corporate_actions.py and portfolio_review.py. Import defensively: a broken
+# or absent sibling must degrade this script to a clear error, never crash it.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import mfn_news
+except Exception:                                        # pragma: no cover
+    mfn_news = None
+
+
+def _to_number(raw):
+    """mfn_news.to_number(), guarded. The one number parser in this toolkit -
+    never a second parser - but a sibling import can fail or raise, and
+    SystemExit does not inherit from Exception, so both are caught here."""
+    if mfn_news is None:
+        return None
+    try:
+        return mfn_news.to_number(raw)
+    except (Exception, SystemExit):
+        return None
+
 
 # Several of these hosts reject or silently hang on the default Python-urllib
 # User-Agent (Nasdaq's Nordic API is the known offender in this toolkit).
@@ -153,6 +192,17 @@ ALL_MICS = ["XSAT", "XNGM", "NSME", "SSME", "XSTO"]
 # on XNGM means SEB's certificates - securities, but not listed companies, so
 # they are excluded from an issuer universe and counted separately instead.
 STRUCTURED_CFI = "EY"
+
+# NGM's post-trade feed reports THREE venues under one MIC-like "Venue of
+# execution" field: XNGM, NSME, and NMTF. NMTF is NGM's ETP and warrant
+# segment (Nordic MTF's trade-reporting label) - securities, but not the
+# listed equity universe this script otherwise covers - so it is excluded
+# from ngm_turnover() the same way EY structured products are excluded above.
+NGM_EQUITY_VENUES = ("XNGM", "NSME")
+
+# Observed file size is ~2.7 MB; this caps a single read well above that so a
+# malformed or unexpectedly large response cannot be read into memory whole.
+NGM_POSTTRADE_MAX_BYTES = 16 * 1024 * 1024
 
 MTF_CAUTION = """\
 MTF CAUTION - this issuer is NOT on a regulated market
@@ -376,6 +426,10 @@ def ngm_symbols():
     NGM state that non-commercial use of this feed is free of charge; any
     other use may be chargeable. Data is delayed 15 minutes and retained 72
     hours, so outside those 72 hours this returns nothing.
+
+    This is bid/ask pre-trade data only - it carries no executed price and no
+    turnover. For those, see ngm_turnover(), which reads the sibling
+    delayed/post-trade feed instead.
     """
     stamps = fetch_json(NGM_MDAPI + "/delayed/pre-trade",
                         cache_key="ngm-pretrade-index", ttl=1800)
@@ -392,6 +446,205 @@ def ngm_symbols():
         symbol = (row.get("Symbol") or "").strip()
         if isin and symbol:
             out[isin] = symbol
+    return out
+
+
+# --------------------------------------------------------------------------
+# NGM post-trade - MiFIR transparency, the actual price/turnover source
+# --------------------------------------------------------------------------
+def _utc_today():
+    return time.strftime("%Y-%m-%d", time.gmtime())
+
+
+def ngm_trading_days():
+    """Dates with an NGM post-trade file available right now, newest first.
+
+    Retention is 72 hours, so this is normally 3-4 dates. The newest entry
+    may be today's UTC calendar date, whose file is still growing while the
+    market trades - see ngm_turnover()'s date=None handling, which treats
+    that entry as not-yet-complete rather than using it silently.
+    """
+    dates = fetch_json(NGM_MDAPI + "/delayed/post-trade",
+                       cache_key="ngm-posttrade-index", ttl=1800)
+    if not dates:
+        return None
+    return list(dates)
+
+
+def _completed_trading_day(dates):
+    """The newest date in `dates` whose file is guaranteed final.
+
+    NGM's post-trade file for the current UTC calendar date accumulates
+    trades all session, so it is never picked as "the last session" on its
+    own - only the entry before it is. If the newest entry is not today (the
+    feed queried outside trading hours, or on a non-trading day) it is
+    already final and used directly.
+    """
+    if not dates:
+        return None
+    if dates[0] == _utc_today():
+        return dates[1] if len(dates) > 1 else None
+    return dates[0]
+
+
+def _ngm_posttrade_csv(date):
+    """One day's raw NGM post-trade CSV, capped and cached per date.
+
+    A completed day's file never changes once written, so it gets the same
+    long TTL as the pre-trade snapshot; today's (still-growing) file gets a
+    short one so a same-day re-run picks up new trades. The read is capped at
+    NGM_POSTTRADE_MAX_BYTES rather than an unbounded resp.read(), so an
+    oversized or runaway response cannot be pulled into memory whole.
+    """
+    key = "ngm-posttrade-%s" % date
+    path = _cache_path(key)
+    ttl = 1800 if date == _utc_today() else TTL * 8
+    if os.path.exists(path) and time.time() - os.path.getmtime(path) < ttl:
+        with open(path, "rb") as fh:
+            return fh.read()
+
+    url = NGM_MDAPI + "/delayed/post-trade/" + date
+    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "*/*"})
+    try:
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            body = resp.read(NGM_POSTTRADE_MAX_BYTES + 1)
+    except (urllib.error.HTTPError, urllib.error.URLError,
+            TimeoutError, OSError):
+        return None
+
+    if len(body) > NGM_POSTTRADE_MAX_BYTES:
+        sys.stderr.write("WARNING: NGM post-trade file for %s exceeded the "
+                         "%d MB cap - refusing to parse a possibly-truncated "
+                         "read.\n" % (date, NGM_POSTTRADE_MAX_BYTES // (1024 * 1024)))
+        return None
+
+    try:
+        os.makedirs(CACHE, exist_ok=True)
+        with open(path, "wb") as fh:
+            fh.write(body)
+    except OSError:
+        pass                                          # cache is an optimisation only
+    return body
+
+
+def _parse_ngm_posttrade(body):
+    """Parse one day's NGM post-trade CSV into per-ISIN turnover.
+
+    Returns (rows, malformed_count). `rows` is {isin: {"isin", "mic",
+    "currency", "turnover", "last_price", "last_trade_utc", "trades"}}.
+
+    NMTF is dropped here, in the parser, rather than left to the caller to
+    remember - it is NGM's ETP and warrant segment, not the listed equity
+    universe this script covers (see NGM_EQUITY_VENUES above). Every number
+    goes through the toolkit's one number parser, mfn_news.to_number - never
+    a second, ad hoc one - and currency is read from "Price currency" on
+    every row rather than assumed, since assuming SEK for a DKK/NOK issuer
+    was a live bug elsewhere in this file. A row missing a required field, or
+    whose ISIN reappears under a different venue/currency than its first
+    sighting (which should never legitimately happen), is skipped and
+    counted as malformed rather than allowed to crash the whole parse.
+    """
+    text = body.decode("utf-8", "replace")
+    reader = csv.DictReader(io.StringIO(text))
+    out = {}
+    malformed = 0
+    for row in reader:
+        try:
+            venue = (row.get("Venue of execution") or "").strip()
+            if venue not in NGM_EQUITY_VENUES:
+                continue                    # NMTF (ETPs/warrants) excluded
+            isin = (row.get("Instrument identification code") or "").strip()
+            ts = (row.get("Trading date and Time") or "").strip()
+            currency = (row.get("Price currency") or "").strip()
+            price = _to_number(row.get("Price"))
+            qty = _to_number(row.get("Quantity"))
+            if not isin or not ts or not currency or price is None or qty is None:
+                malformed += 1
+                continue
+        except Exception:
+            malformed += 1
+            continue
+
+        entry = out.get(isin)
+        if entry is None:
+            entry = out[isin] = {"isin": isin, "mic": venue,
+                                 "currency": currency, "turnover": 0.0,
+                                 "last_price": None, "last_trade_utc": None,
+                                 "trades": 0}
+        elif entry["mic"] != venue or entry["currency"] != currency:
+            # Same ISIN reported under a different venue or currency within
+            # one day's file - should not happen; treat as malformed rather
+            # than silently mixing two different instruments' figures.
+            malformed += 1
+            continue
+
+        entry["turnover"] += price * qty
+        entry["trades"] += 1
+        # ISO-8601 timestamps with a fixed-width fractional second sort
+        # lexicographically in trade order, so a plain string comparison
+        # finds the latest trade without parsing every timestamp.
+        if entry["last_trade_utc"] is None or ts > entry["last_trade_utc"]:
+            entry["last_trade_utc"] = ts
+            entry["last_price"] = price
+
+    return out, malformed
+
+
+def ngm_turnover(date=None):
+    """Per-ISIN last-session turnover and last-trade price for NGM Equity
+    (XNGM) and Nordic SME (NSME), from NGM's free delayed/post-trade MiFIR
+    transparency feed - a sibling of ngm_symbols()'s delayed/pre-trade
+    snapshot, not the same endpoint, and the only free source in this
+    toolkit for real turnover or a real last-trade price on these two
+    segments. NGM state that non-commercial use of this feed is free of
+    charge; any other use may be chargeable.
+
+    Retention is 72 hours: this supplies LAST-SESSION figures and nothing
+    more. It cannot build a history series, and calling it repeatedly for
+    the same completed date is wasted network traffic - the result is cached
+    per date because a completed day's file never changes.
+
+    date=None resolves to the most recent COMPLETED day (see
+    _completed_trading_day): NGM's file for the current UTC calendar date is
+    still accumulating trades while the market is open, so it is never used
+    as "the last session" unless a caller asks for it by name. Pass that
+    date explicitly to see it anyway; the result comes back with
+    meta["partial"] = True so nobody mistakes a half day for a full one.
+
+    NMTF (NGM's ETP and warrant segment) is excluded - see NGM_EQUITY_VENUES.
+
+    Returns {isin: {"isin", "mic", "currency", "turnover", "last_price",
+    "last_trade_utc", "trades"}, "_meta": {...}}. "_meta" is a reserved key,
+    never a valid ISIN (ISINs are 12 characters, 2 letters then 10
+    alphanumerics), holding {"date", "partial", "malformed_rows_skipped",
+    "segments_included", "segments_excluded"}.
+
+    Returns None - never raises - if the feed cannot be reached, or if
+    date=None and no completed day exists in the current 72-hour window.
+    """
+    if date is None:
+        days = ngm_trading_days()
+        if not days:
+            return None
+        date = _completed_trading_day(days)
+        if date is None:
+            return None
+        partial = False
+    else:
+        partial = (date == _utc_today())
+
+    body = _ngm_posttrade_csv(date)
+    if body is None:
+        return None
+
+    out, malformed = _parse_ngm_posttrade(body)
+    out["_meta"] = {
+        "date": date,
+        "partial": partial,
+        "malformed_rows_skipped": malformed,
+        "segments_included": list(NGM_EQUITY_VENUES),
+        "segments_excluded": ["NMTF"],
+    }
     return out
 
 
@@ -658,6 +911,13 @@ def source_chain(segment, esef_periods, wire):
     if wire and "cis" in (wire.get("wires") or []):
         lines.append("3. Cision newsroom also carries this issuer - "
                      "cision_news.py is a valid cross-check.")
+
+    if segment.mic in NGM_EQUITY_VENUES:
+        lines.append("%d. Last-session turnover and last-trade price - "
+                     "venues_se.py --ngm-turnover (NGM's free delayed/"
+                     "post-trade MiFIR transparency feed; last session only, "
+                     "72h retention, never a history series)."
+                     % (len(lines) + 1))
 
     tail = ("On an MTF this is the ONLY full-precision source."
             if not segment.regulated else
@@ -935,6 +1195,53 @@ def build_json(query, rows, args):
     return out
 
 
+def print_ngm_turnover(date, args):
+    """--ngm-turnover: last-session (or a named date's) turnover and last
+    price for NGM Equity + Nordic SME, from ngm_turnover()."""
+    result = ngm_turnover(date)
+    if result is None:
+        raise SystemExit(
+            "DATA NOT AVAILABLE: NGM post-trade feed unreachable, or (if no "
+            "date was given) no completed trading day is available in the "
+            "current 72-hour retention window.")
+
+    meta = result.pop("_meta")
+    if args.json:
+        payload = dict(result)
+        payload["_meta"] = meta
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+
+    print("NGM EQUITY (XNGM) + NORDIC SME (NSME) - LAST-SESSION TURNOVER")
+    print("Source: mdapi.ngm.se/delayed/post-trade (MiFIR post-trade "
+          "transparency, free for non-commercial use). NOT ngm_symbols()'s "
+          "pre-trade bid/ask feed.")
+    print("Date: %s%s" % (meta["date"],
+                          "  *** TODAY - STILL ACCUMULATING, PARTIAL DAY ***"
+                          if meta["partial"] else "  (completed session)"))
+    print("Segments included: %s.  Excluded: %s (ETPs/warrants, not listed "
+          "equity)." % (", ".join(meta["segments_included"]),
+                        ", ".join(meta["segments_excluded"])))
+    if meta["malformed_rows_skipped"]:
+        print("%d malformed row(s) skipped." % meta["malformed_rows_skipped"])
+    print()
+
+    rows = sorted(result.values(), key=lambda r: -r["turnover"])
+    if not rows:
+        print("No XNGM/NSME trades found for this date.")
+        return
+    print("%-14s %-4s %16s %14s %5s  %s"
+         % ("ISIN", "MIC", "TURNOVER", "LAST PRICE", "CCY", "LAST TRADE (UTC)"))
+    print("-" * 84)
+    for row in rows:
+        print("%-14s %-4s %16.0f %14.3f %5s  %s"
+             % (row["isin"], row["mic"], row["turnover"], row["last_price"],
+                row["currency"], row["last_trade_utc"]))
+    print()
+    print("%d ISIN(s) traded, %d trade(s) total."
+          % (len(rows), sum(r["trades"] for r in rows)))
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Swedish listing venues beyond Nasdaq Stockholm main "
@@ -960,7 +1267,19 @@ def main():
     parser.add_argument("--news", action="store_true",
                         help="Spotlight's venue-wide news feed (30 most recent "
                              "items; the feed cannot be filtered by company)")
+    parser.add_argument("--ngm-turnover", nargs="?", const="", default=None,
+                        metavar="DATE", dest="ngm_turnover",
+                        help="last-session turnover and last price for NGM "
+                             "Equity + Nordic SME (NGM's free delayed/"
+                             "post-trade MiFIR transparency feed). Omit DATE "
+                             "for the most recent completed day, or give one "
+                             "(YYYY-MM-DD) from --ngm-turnover's own output "
+                             "if it is still in the 72-hour retention window")
     args = parser.parse_args()
+
+    if args.ngm_turnover is not None:
+        print_ngm_turnover(args.ngm_turnover or None, args)
+        return
 
     if args.news:
         data = fetch_json(SPOTLIGHT_NEWS, cache_key="spotlight-news", ttl=600)

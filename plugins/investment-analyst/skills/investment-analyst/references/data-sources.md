@@ -164,6 +164,60 @@ returns the global Swedish firehose, not the company; do not use it.
 
 No regulatory flag exists in the feed. Use `scripts/cision_news.py`.
 
+### Avanza (company search, IR homepage pointer, calendar cross-check)
+
+Free, no key, no login. Two endpoints, both under `www.avanza.se/_api`, used by
+`ir_discovery.py` (`avanza_lookup`) and, through it, `horizon.py`:
+
+| Endpoint | Returns |
+|---|---|
+| `POST https://www.avanza.se/_api/search/filtered-search` `{"query": <name>, "searchFilter": {"types": ["STOCK"]}}` | ranked search hits: name, ticker, `orderBookId`, country flag |
+| `GET https://www.avanza.se/_api/market-guide/stock/{orderBookId}/details` | `company.homepage`, share count, owners, `companyEvents.events` (the financial calendar `horizon.py` reads), past dividends |
+
+Both are unofficial — the website's own XHR backend, not a published,
+documented API. `filtered-search` is POST-only (it answers 405 to a plain GET,
+which is what makes a naive prober conclude the endpoint is dead), and neither
+path appears in any Avanza developer documentation, because none exists for
+the public site. That makes it unofficial in exactly the sense this file
+already uses for the Yahoo v8 chart endpoint: a legitimate cross-check, never
+the sole source for a figure entering the model — **with one deliberate
+exception**, below.
+
+**Terms-of-service posture, verified live 2026-09-01.** `www.avanza.se/robots.txt`
+carries a single `User-agent: *` block with **no `Disallow` directive at
+all** — two `Sitemap:` lines and nothing else:
+
+```
+User-agent: *
+Sitemap: https://www.avanza.se/sitemap2.xml
+Sitemap: https://www.avanza.se/sitemap1.xml
+```
+
+So there is no robots violation in fetching either endpoint. No key exists to
+omit, no paywall is bypassed, and no authentication is evaded — the requests
+match what the site itself serves to a browser, at the same politeness delay
+(`ir_discovery.py`'s `_throttle`) the rest of this toolkit uses.
+
+**The one place this plugin depends on an unofficial endpoint as a sole
+source.** `references/source-registry.md` rules that tier 4 (Avanza's tier)
+may never be the sole source of a material financial figure, and every other
+Avanza use in this toolkit honours that — share count, ownership and the IR
+homepage pointer are all cross-checks. The next scheduled report date is the
+one exception: no free, keyless, structured alternative exists for it
+(`horizon.py`'s own docstring and `references/portfolio.md` document what was
+checked and ruled out), so `companyEvents.events` is used there as **`SINGLE
+SOURCE`, not a cross-check**, and every date `horizon.py` prints carries that
+status inline on the date itself rather than leaving it to a footer
+paragraph. It remains a lead to verify against the issuer's own "Finansiell
+kalender" page, never a citation for a live decision — a calendar date, not a
+financial figure, but the tension is stated plainly rather than resolved away
+by wording.
+
+Use `scripts/ir_discovery.py` (`avanza_lookup`, `score_candidate`) and
+`scripts/horizon.py`, which depends on it. See `references/source-registry.md`
+for the resolution-table row and the tier-4 rule this endpoint is the one
+exception to.
+
 ### Finansinspektionen — Fondinnehav (Swedish institutional ownership)
 
 Free, no key. Quarterly, back to 2018Q4. The list page at
@@ -327,12 +381,14 @@ as consensus.
 
 ## Terms-of-service posture
 
-Two endpoints in this file are grey rather than clearly official: the
+Three endpoints in this file are grey rather than clearly official: the
 browser-shaped User-Agent sent to `api.nasdaq.com` (the default
-`Python-urllib` agent is blocklisted), and the Yahoo v8 chart endpoint, which
-is unofficial and unsupported. Neither is paid or keyed, so neither breaches
-the no-paid-data rule, but the plugin's constraint also forbids bypassing
-terms of service, so the posture is stated rather than left implicit:
+`Python-urllib` agent is blocklisted), the Yahoo v8 chart endpoint, which is
+unofficial and unsupported, and Avanza's `_api/search/filtered-search` and
+`_api/market-guide/stock/{id}/details` (the website's own undocumented XHR
+backend). None is paid or keyed, so none breaches the no-paid-data rule, but
+the plugin's constraint also forbids bypassing terms of service, so the
+posture is stated rather than left implicit:
 
 - It identifies itself honestly. Sending a browser-shaped User-Agent to get
   past a blocklisted default agent is not impersonating a specific browser
@@ -340,10 +396,18 @@ terms of service, so the posture is stated rather than left implicit:
 - It respects published rate limits and caches results rather than hammering
   an endpoint.
 - It uses only endpoints the publisher serves to the public without a key.
-- Unofficial endpoints, such as the Yahoo chart API, would be a cross-check,
-  never the sole source for a figure that enters the model — moot for Yahoo
-  specifically while it is unreachable, but the rule stands for anything
-  unofficial that does answer.
+  Avanza's `robots.txt` was checked live (2026-09-01): a single
+  `User-agent: *` block with no `Disallow` directive at all, so nothing here
+  is disallowed.
+- Unofficial endpoints, such as the Yahoo chart API or Avanza's search and
+  details endpoints, would be a cross-check, never the sole source for a
+  figure that enters the model — moot for Yahoo specifically while it is
+  unreachable, but the rule stands for anything unofficial that does answer.
+  **The one deliberate, stated exception**: `horizon.py`'s next-scheduled-
+  report date has no free, keyless, structured alternative (see the Avanza
+  section above and `references/source-registry.md`), so it is used as
+  `SINGLE SOURCE`, disclosed as such on every date printed, rather than
+  silently promoted to a cross-check it is not.
 - If a publisher's terms or `robots.txt` forbid programmatic access, the
   source is dropped rather than worked around.
 - A paywalled article is not a source. Never route around a paywall, a
