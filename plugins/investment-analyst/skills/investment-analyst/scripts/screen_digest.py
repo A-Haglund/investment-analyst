@@ -1243,12 +1243,16 @@ def run(args):
     # uses this intraday field at all, see apply_liquidity_floor) - it
     # exists purely so a pre-open run fails LOUDLY instead of quietly
     # printing a well-formed, empty digest.
-    if nasdaq_liq:
-        blank = sum(1 for v in nasdaq_liq.values() if v["turnover"] is None)
-        if blank > PREMARKET_BLANK_TURNOVER_FRACTION * len(nasdaq_liq):
-            raise SystemExit(
-                "REFUSING TO PUBLISH: %d of %d screener rows carry no "
-                "turnover - the market has not opened yet." % (blank, len(nasdaq_liq)))
+    # The screener's intraday turnover being blank is NORMAL before the 09:00
+    # open and no longer means anything: the liquidity floor reads the last
+    # completed daily bar instead. Guarding on it here would refuse every
+    # pre-open run, which is a supported and in fact preferable schedule -
+    # yesterday's bar is unambiguously final, where an evening run has to
+    # judge whether today's session has settled.
+    #
+    # What still deserves a loud failure is the floor having nothing to work
+    # with at all. That is checked after the history stage, where the evidence
+    # actually is.
 
     firds_by_mic, firds_failed = fetch_firds(mics)
     for mic, why in firds_failed.items():
