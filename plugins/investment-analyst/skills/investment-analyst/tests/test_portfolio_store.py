@@ -529,7 +529,13 @@ class DuplicateRowsMerge(unittest.TestCase):
     """M4: two rows for one issuer (two accounts, an ISK and a KF line)
     must become one holding with quantity summed, not two positions."""
 
-    def test_duplicate_holdings_merge_with_summed_quantity_no_cost_basis(self):
+    def test_duplicate_holdings_merge_with_summed_quantity_and_weighted_cost(self):
+        """Both rows carry a known cost in the SAME currency (SEK), so the
+        combined cost basis is the exact quantity-weighted average - not a
+        guess, arithmetic - rather than the null this used to store. This
+        replaces a prior version of this test that asserted None here; that
+        assertion encoded the defect (destroying a recoverable cost basis),
+        not the intended behaviour."""
         holdings = [
             {"lei": "L1", "isin": "I1", "name": "Investor AB", "symbol": "INVE B",
              "quantity": 100, "cost_per_share": 50.0, "cost_currency": "SEK",
@@ -543,8 +549,9 @@ class DuplicateRowsMerge(unittest.TestCase):
         merged = pf._merge_duplicate_holdings(holdings)
         self.assertEqual(len(merged), 1)
         self.assertEqual(merged[0]["quantity"], 300)
-        self.assertIsNone(merged[0]["cost_per_share"])
-        self.assertIsNone(merged[0]["cost_currency"])
+        # (100*50 + 200*60) / 300 = 17000 / 300
+        self.assertAlmostEqual(merged[0]["cost_per_share"], 17000.0 / 300, places=9)
+        self.assertEqual(merged[0]["cost_currency"], "SEK")
 
     def test_duplicate_paste_rows_merge_end_to_end(self):
         fake = default_fake_cr()
@@ -561,7 +568,11 @@ class DuplicateRowsMerge(unittest.TestCase):
                 doc = pf.load("dupe")
                 self.assertEqual(len(doc["holdings"]), 1)
                 self.assertEqual(doc["holdings"][0]["quantity"], 300)
-                self.assertIsNone(doc["holdings"][0]["cost_per_share"])
+                # Both parsed rows default to SEK (no currency word in either
+                # line), so this is the same weighted-average case as above.
+                self.assertAlmostEqual(doc["holdings"][0]["cost_per_share"],
+                                       17000.0 / 300, places=9)
+                self.assertEqual(doc["holdings"][0]["cost_currency"], "SEK")
         finally:
             pf._company_resolve = old_cr
             sys.stdin = old_stdin

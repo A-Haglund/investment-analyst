@@ -129,12 +129,27 @@ inventing a number:
 - **Historical multiple ranges** — for Nordic issuers, `nordic_shares.py "NAME"
   --history 10` returns ten years of daily closes from the exchange itself,
   with the current price's percentile in that distribution. Pair each close
-  with the share count and earnings of the time; the series is **unadjusted**
-  for splits, dividends and **rights issues**, so a raw price ratio across any
-  of those is wrong — a rights issue needs a TERP adjustment, and these are
-  common on the venues this plugin covers. Where the full ten-year window is
-  not available from a compliant source, give the shorter one and say so
-  rather than filling the gap from an unofficial endpoint.
+  with the share count and earnings of the time.
+
+  The series is **back-adjusted for splits**. That is measured, not assumed:
+  four dated splits in both directions — Mycronic 2:1, Investor A/B 4:1,
+  Bambuser 1:30 reverse, Nobia 1:10 reverse — show no price discontinuity at
+  the effective date. So a return, a drawdown-from-high or a
+  percentile-of-own-history computed straight off these closes is already
+  correct across a split, and **no manual split adjustment goes on top of it**:
+  `corporate_actions.split_adjustment_factor()` is for a per-share fundamental
+  (EPS, dividend per share, book value per share), which comes from a filing
+  and is never itself restated for a split. Applying it to a price
+  double-adjusts it.
+
+  Two things the series does not fix. **Dividends are unverified either way**
+  and treated as unadjusted, so a comparison spanning an ex-dividend date is
+  likely wrong by the dividend and nothing here corrects it — use these closes
+  for a price or a price-based multiple range, never for a total return.
+  **Rights issues need a TERP adjustment** and are common on the venues this
+  plugin covers. Where the full ten-year window is not available from a
+  compliant source, give the shorter one and say so rather than filling the
+  gap from an unofficial endpoint.
 
 The rule is unchanged: an unsourceable number is `DATA NOT AVAILABLE`, never a
 plausible-looking invention.

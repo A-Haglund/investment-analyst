@@ -364,21 +364,23 @@ At QUICK depth, run flags 2, 5, 17 and 18 — the ones reachable from QUICK's ow
 step list — and report the count of items not screened. Flags 1 and 19 both
 key off `mfn_news.py --regulatory`, which is step 6 of `SKILL.md`'s Swedish
 routing table and only enters at STANDARD depth, so they defer to STANDARD
-along with the rest. At STANDARD and DEEP, run all twenty. Publish a single
-block, unresolved flags first:
+along with the rest. At STANDARD and DEEP, run all twenty.
 
-```
-RED FLAG SCREEN — 20 items
-  RED FLAG — REQUIRES INVESTIGATION   2   (7 receivables, 13 CFO departure)
-  RESOLVED ON INSPECTION              1   (5 conversion — Q4 shipment timing,
-                                           collected in January, AR note 18)
-  CLEAR                              11
-  DATA NOT AVAILABLE                  6   (3, 4, 9, 10, 14, 16 — notes not read)
-```
+**Unresolved flags that are material to the recommendation surface in the answer**
+through the `Talar emot` list in section 4, or in the `Viktigast` closing line.
+Resolved flags confirm a benign explanation. A tally of unresolved, resolved,
+clear and not-available items is underlying material (printed when the reader
+requests it), together with the full flag-by-flag record.
 
-Six `DATA NOT AVAILABLE` entries on a twenty-item screen is a real statement
-about how much of this company you can see, and it belongs next to the
-recommendation rather than inside it.
+Where the red flag screen runs materially clean, that is worth stating in the
+answer rather than leaving silence to imply the usual concerns. A reader who sees
+no flags printed may reasonably wonder whether they were looked for.
+
+In the printed answer, do not dump the raw flag list. Instead, fold material
+findings into `Talar emot` with their own sourcing and reasoning, just as any
+other challenge to the thesis would appear there. Unresolved flags that do not
+crack the call live in `Viktigast`, which is where the reader should see the
+real limitations of this run.
 
 ---
 
@@ -661,9 +663,11 @@ the more useful answer.
 
 ## 8. Conviction ceiling
 
-`data-quality.md` §7 sets the hard cap: **a First North or Spotlight microcap
-caps at MEDIUM.** This file supplies the reason, because a rule whose reason is
-understood survives cases the rule did not anticipate.
+`data-quality.md` §7 sets the hard cap: **a microcap on First North, Spotlight
+or NGM caps at MEDIUM**, enforced by `decision_record.py` when the decision
+record carries the `VENUE_MICROCAP` reason code. This file supplies the reason,
+because a rule whose reason is understood survives cases the rule did not
+anticipate.
 
 The cap is not about sourcing. The primary document exists and is obtainable —
 the MAR release and the report PDF. The cap is about **corroboration**.
@@ -682,6 +686,12 @@ Push down to **LOW** where any one of these holds:
 - a material figure taken only from `--figures` with the PDF unread
 - three or more unresolved flags from Part 1 §2
 
+These five are judgement, not code: each one belongs on the record as the
+reason code that fits it — `DATA_CONFIDENCE_LOW` for the evidence cases,
+`SINGLE_SOURCE_MATERIAL` for the unread PDF — and the enforced ceiling follows
+from what you attach. A push-down you keep in your head is one the record
+cannot show a later reader.
+
 Push to **VERY LOW** where the business model is unproven — pre-revenue, or
 revenue from a single contract that has not repeated — or where the scenario
 values span a very wide range, per the `data-quality.md` ladder.
@@ -689,7 +699,7 @@ values span a very wide range, per the `data-quality.md` ladder.
 **MEDIUM is a ceiling, not a floor.** Nothing here prevents a LOW-conviction
 BUY, and `data-quality.md` is explicit that weak evidence does not veto a
 positive call. It changes how the call is written:
-`BUY — LOW CONVICTION (data confidence 44/100)`, with the position size
+`KÖP — LÅG ÖVERTYGELSE`, with `Datasäkerhet 44/100` on the scores line and the position size
 constrained by the liquidity rule in §2 and stated in SEK. A reader who sees
 only the recommendation line must still see that the second number is low.
 

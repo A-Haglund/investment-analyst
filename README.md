@@ -36,6 +36,15 @@ it is. That discipline lives in code rather than in instructions:
 - **A check that could not run is not a check that passed.** Unreachable
   sources degrade to `not checked` and are counted, never folded into a clean
   result.
+- **The decision is an object, not prose.** The recommendation, the conviction,
+  the fair-value range and the expected return are emitted as a validated
+  record; the human-readable block is rendered from it. `decision_record.py`
+  recomputes the arithmetic and refuses a record that disagrees with its own
+  inputs, so the numbers in the answer cannot drift from the numbers on file.
+- **Conviction is capped by the weakest input, in code.** Depth, an unresolved
+  conflict, a fired thesis breaker, an MTF microcap and data confidence below
+  the floor each set a ceiling, and a record above it is refused rather than
+  warned about.
 - **No identifying User-Agent, so no SEC EDGAR — and no US coverage.** SEC's
   fair-access policy requires a real contact address on every request, which
   would identify the analyst behind each run; a fabricated address would
@@ -95,15 +104,17 @@ plugins/investment-analyst/
     SKILL.md                      method, depths, output contract
     references/                   13 files: valuation, fundamentals, Sweden,
                                   Europe, data quality, verification, sources
-    scripts/                      27 Python scripts, stdlib only
-    tests/                        21 test files
+    scripts/                      38 Python scripts, stdlib only
+    tests/                        32 test files
 tools/pack.py                     builds the distributable zip
 PLUGIN-BRIEF.md                   a detailed technical brief
+MIGRATION.md                      what changed in 3.0.0 and what to do about it
 ```
 
 ## Tests
 
-374 tests, all passing against live free endpoints.
+Over 850 test functions across 32 test files, all passing against live free
+endpoints.
 
 ```bash
 cd plugins/investment-analyst/skills/investment-analyst/tests
@@ -122,6 +133,14 @@ to elsewhere.
 
 Python 3, standard library only. No pip install, no virtualenv, no lockfile.
 
+## Upgrading from 2.6
+
+v3.0.0 carries three breaking changes: the decision record is emitted as JSON
+and rendered rather than written by hand, the market screen is `/screen` rather
+than `screen_digest.py` run by hand, and the price-series adjustment semantics
+are pinned down. Stored portfolios and theses from 2.6 load unchanged. See
+[MIGRATION.md](MIGRATION.md).
+
 ## Known limits
 
 Stated plainly, because a tool that hides its gaps is worse than one that has
@@ -138,9 +157,18 @@ them:
 - **Spotlight has no free price or turnover feed.** Nasdaq and NGM do.
 - **No consensus estimates.** Nothing free and licensable exists, so "versus
   expectations" is always versus the company's own history.
-- **No point-in-time history.** The toolkit carries publication dates and
-  refuses to claim historical knowledge it cannot evidence. That is not a
-  backtesting capability and is not presented as one.
+- **No point-in-time history, so no backtest.** The toolkit carries publication
+  dates and refuses to claim historical knowledge it cannot evidence. Three
+  facts keep it that way: fundamentals come back restated rather than
+  as-originally-reported, every universe build queries the live listing so
+  survivorship bias is structural, and there is no consensus history or
+  historical share register. `calibration.py` measures decisions **forward**
+  from v3.0.0 — a dated verdict, a validated price and a real future close —
+  and is not a backtester.
+- **Price history is back-adjusted for splits, and that is measured** against
+  four dated splits in both directions with no discontinuity at any effective
+  date. Dividend treatment is unverified, so the series carries a price range
+  and never a total return, and there is still no dividend-per-share history.
 
 ## Disclaimer
 

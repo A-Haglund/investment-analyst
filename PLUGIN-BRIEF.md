@@ -1,4 +1,4 @@
-# Briefing: "Investment Analyst" v2.4.0 — a Claude Code / Claude Cowork plugin
+# Briefing: "Investment Analyst" v3.0.0 — a Claude Code / Claude Cowork plugin
 
 I am going to describe a software system I have built. At the end I will ask you
 for improvement suggestions. Please read the whole thing first, including the
@@ -17,22 +17,35 @@ are deliberately out of scope — SEC EDGAR requires an identifying contact
 address on every request, and this system sends none.
 
 It is not a trading system, a screener product or a data vendor. It is a
-structured research process that a language model follows, backed by 23 Python
-scripts that fetch and verify data from official sources — and, increasingly,
-that enforce discipline in code rather than only asking the model to remember
-it: a shared provenance/temporal-validity core (`finfact.py`), a trailing-
-twelve-months assembler (`ttm_engine.py`), a hard gate that refuses a multiple
-built on an incompatible price/earnings period (`valuation_gate.py`), and a
-persistent, falsifiable thesis ledger (`thesis_ledger.py`). A 57-test
-regression suite backs this layer.
+structured research process that a language model follows, backed by
+38 Python scripts that fetch and verify data from official sources —
+and, increasingly, that enforce discipline in code rather than only asking the
+model to remember it: a shared provenance/temporal-validity core
+(`finfact.py`), a trailing-twelve-months assembler (`ttm_engine.py`), a hard
+gate that refuses a multiple built on an incompatible price/earnings period
+(`valuation_gate.py`), a persistent falsifiable thesis ledger
+(`thesis_ledger.py`), and — new in v3.0.0 — a validated decision record that
+refuses arithmetic disagreeing with its own inputs and enforces the conviction
+ceiling (`decision_record.py`).
 
-Scale: 51 files, ~32,100 lines. Roughly 26,600 lines of Python across 23
-scripts, ~4,100 lines of Markdown instruction files the language model reads
-(`SKILL.md` plus 13 reference files), ~250 lines of command definitions, and a
-~1,100-line, 57-test regression suite.
+Scale: 94 files, ~62,000 lines. Roughly 42,300 lines of Python across 38
+scripts, ~5,400 lines of Markdown instruction files the language model reads
+(`SKILL.md` plus 13 reference files), ~700 lines of command definitions, and a
+~13,600-line regression suite of roughly 850 test functions across 32 files.
 
 **Design philosophy, in the system's own words:** the goal is not to predict the
 future accurately. The goal is to make bad investment decisions harder.
+
+**What changed in v3.0.0**, since the rest of this brief describes the system as
+it now stands: the decision record became a validated object the model emits
+and a script renders, rather than prose the model typed three times; the
+conviction caps moved from prose into enforced code; `/analyze` now writes the
+thesis and stores the decision, which is what makes the portfolio review's
+breaker check able to fire at all; and a shared core (`numparse.py`,
+`finmath.py`, `http_util.py`, `market_universe.py`, `_bootstrap.py`) replaced
+four number parsers, two CAGR implementations, fifteen hand-rolled HTTP
+fetchers and a screen pipeline that existed in two divergent copies. See
+`MIGRATION.md` for the three breaking changes.
 
 ---
 
@@ -73,51 +86,67 @@ Two halves.
 
 | File | Lines | Purpose |
 |---|---|---|
-| `SKILL.md` | 638 | The spine: evidence rules, source hierarchy, market routing, depth selection, the verdict block, the twelve-section output contract, the research phases |
-| `references/red-flags-and-smallcap.md` | 719 | A 20-item red-flag screen with numeric thresholds, plus a distinct posture for small caps and MTF venues |
-| `references/sweden.md` | 428 | Swedish source chain, market segments, IFRS/K3 terminology, reporting conventions |
-| `references/valuation.md` | 333 | Multiples, DCF, reverse DCF, scenarios, the enterprise-to-equity bridge, the financials/real-estate carve-out |
-| `references/data-sources.md` | 326 | Every endpoint, its quirks, and its limits |
-| `references/worked-example.md` | 270 | Calibrates output format and tagging density |
-| `references/verification.md` | 231 | Cross-checks and the mandatory Evidence block |
-| `references/data-quality.md` | 215 | The datapoint metadata model, conflict resolution, data confidence scoring, conviction ladder |
-| `references/europe.md` | 180 | Nordics / Germany / France routing and currency traps |
-| `references/fundamentals.md` | 173 | Metric definitions, formulas, quality-of-earnings tests, lease treatment |
-| `references/moat-growth-management.md` | 163 | Moat scoring 0–10, growth decomposition, management assessment |
-| `references/bear-case-and-scoring.md` | 164 | Devil's advocate section, the trigger table, 9-category scorecard, recommendation logic |
-| `references/source-registry.md` | 134 | Which source is *authoritative* for which data type |
-| `references/portfolio.md` | 114 | Position sizing, concentration, exposure, ranking |
+| `SKILL.md` | 1247 | The spine: evidence rules, source hierarchy, market routing, depth selection, the verdict block, the seven-section output contract, the decision-record contract, the research phases |
+| `references/red-flags-and-smallcap.md` | 733 | A 20-item red-flag screen with numeric thresholds, plus a distinct posture for small caps and MTF venues |
+| `references/worked-example.md` | 462 | Calibrates output format and tagging density; carries the decision record as JSON and as its rendered block |
+| `references/sweden.md` | 434 | Swedish source chain, market segments, IFRS/K3 terminology, reporting conventions |
+| `references/valuation.md` | 410 | Multiples, DCF, reverse DCF, scenarios, the enterprise-to-equity bridge, the financials/real-estate carve-out, price-series adjustment semantics |
+| `references/data-sources.md` | 393 | Every endpoint, its quirks, and its limits |
+| `references/portfolio.md` | 335 | Position sizing, concentration, exposure, ranking, the three-layer review |
+| `references/data-quality.md` | 270 | The datapoint metadata model, conflict resolution, data confidence scoring, and the single home for the conviction ladder and its enforced caps |
+| `references/verification.md` | 238 | Cross-checks and the mandatory Evidence block |
+| `references/fundamentals.md` | 208 | Metric definitions, formulas, quality-of-earnings tests, lease treatment |
+| `references/bear-case-and-scoring.md` | 195 | Devil's advocate section, the trigger table (also the thesis ledger's input contract), 9-category scorecard, recommendation logic |
+| `references/europe.md` | 188 | Nordics / Germany / France routing and currency traps |
+| `references/moat-growth-management.md` | 167 | Moat scoring 0–10, growth decomposition, management assessment |
+| `references/source-registry.md` | 140 | Which source is *authoritative* for which data type |
 
 The model loads `SKILL.md` always and pulls a reference file only when it
 reaches the phase that needs it (progressive disclosure, to control context
 cost).
 
-### 3b. The data layer (23 Python scripts, stdlib only)
+### 3b. The data layer (38 Python scripts, stdlib only)
 
 | Script | Lines | What it does |
 |---|---|---|
-| `thesis_ledger.py` | 2852 | Persistent, falsifiable thesis keyed on LEI/ISIN/CIK, with numeric invalidation breakers, re-testable against a later filing; `--as-of` re-plays a past evaluation without overwriting the live status |
-| `peers_se.py` | 2633 | Scores a peer set on eight dimensions, business archetype among them, not sector code |
-| `ttm_engine.py` | 2450 | Assembles trailing twelve months from the latest annual plus interim reports, since ESEF carries annual figures only |
-| `guidance_track.py` | 2123 | Extracts a company's standing financial targets from its own IR pages, keeps them separate from period guidance and delivered outcome, and scores management execution |
-| `corporate_actions.py` | 1964 | Splits, rights issues, directed issues, buybacks; the share-count disclosure log |
-| `macro_se.py` | 1645 | Riksbank rates/FX/yield curve; SCB official industry margin benchmarks by SNI; ECB/Eurostat |
+| `thesis_ledger.py` | 3490 | Both persisted objects, keyed on LEI/ISIN: the price-free falsifiable thesis with numeric invalidation breakers, re-testable against a later filing (`--as-of` re-plays a past evaluation without overwriting the live status), and the price-stamped decision record (`--decide`). Append-only; nothing is rewritten or dropped |
+| `peers_se.py` | 3207 | Scores a peer set on eight dimensions, business archetype among them, not sector code |
+| `guidance_track.py` | 3016 | Extracts a company's standing financial targets from its own IR pages, persists each statement with the vintage it was made in, keeps targets separate from period guidance and delivered outcome, and scores management execution |
+| `ttm_engine.py` | 2322 | Assembles trailing twelve months from the latest annual plus interim reports, since ESEF carries annual figures only |
+| `screen_digest.py` | 1725 | The unattended daily fell-and-might-be-cheap digest, wall-clock bounded, run by the scheduled job rather than by hand |
+| `corporate_actions.py` | 2116 | Splits, rights issues, directed issues, buybacks; the share-count disclosure log; the measured split-adjustment evidence for the price series |
+| `macro_se.py` | 1651 | Riksbank rates/FX/yield curve; SCB official industry margin benchmarks by SNI; ECB/Eurostat |
 | `company_resolve.py` | 1550 | Canonical identity: legal name, ISIN, LEI, org number, MIC, share classes, quote vs reporting currency, fiscal year end — refuses on an ambiguous name |
-| `ir_discovery.py` | 1468 | Locates and verifies the issuer's own Investor Relations site and report archive, rather than guessing URLs |
-| `share_semantics.py` | 1069 | Resolves which of six competing "shares outstanding" figures applies, and computes market cap per class rather than a blended price times a total |
-| `venues_se.py` | 995 | Routes an issuer to its listing venue and states whether ESEF applies |
-| `insider_se.py` | 1013 | Swedish insider (PDMR) transactions, classified DISCRETIONARY / MECHANICAL / DERIVATIVE |
-| `valuation_gate.py` | 1050 | Refuses to print a multiple when price and earnings do not share a compatible period — eight checks, all-or-nothing |
+| `ir_discovery.py` | 1483 | Locates and verifies the issuer's own Investor Relations site and report archive, rather than guessing URLs |
+| `valuation_gate.py` | 1454 | Refuses to print a multiple when price and earnings do not share a compatible period — eight checks, all-or-nothing |
+| `portfolio_store.py` | 1367 | Stores a portfolio from pasted Avanza/Nordnet text or typed positions, resolving identity and refusing ambiguous names |
+| `venues_se.py` | 1335 | Routes an issuer to its listing venue and states whether ESEF applies |
+| `portfolio_metrics.py` | 1261 | Herfindahl concentration, effective position count, sector and geographic exposure, hidden overlap, downside risk, cash drag |
+| `calibration.py` | 1218 | Forward-only outcome and calibration reporting on stored decisions at 3, 6 and 12 months. Not a backtester, and prints `INSUFFICIENT SAMPLE` rather than a hit rate below its minimum |
+| `research_delta.py` | 1164 | Diffs a new decision record against the stored one and prints only what moved |
+| `insider_se.py` | 1008 | Swedish insider (PDMR) transactions, classified DISCRETIONARY / MECHANICAL / DERIVATIVE |
+| `share_semantics.py` | 1004 | Resolves which of six competing "shares outstanding" figures applies, and computes market cap per class rather than a blended price times a total |
 | `short_se.py` | 965 | Swedish disclosed short positions with holder-level trend |
-| `earnings_quality.py` | 919 | Cash-conversion and accrual ratios that separate reported profit from actual cash |
+| `earnings_quality.py` | 932 | Cash-conversion and accrual ratios that separate reported profit from actual cash |
+| `portfolio_review.py` | 910 | The three-layer triage: breakers, cheap alerts, then STANDARD depth only on what those flagged |
+| `screen_value.py` | 900 | The on-demand `/screen` deep-value screen: universe → multi-year history → value filter → liquidity floor → corporate actions → ESEF margins → rank, printing what each stage cut |
+| `market_universe.py` | 798 | The shared universe/liquidity/returns layer both screens build on, extracted in v3.0.0 so it exists once rather than in two divergent copies |
+| `ownership_se.py` | 760 | Swedish fund ownership per ISIN, quarterly, with concentration and trend |
+| `decision_record.py` | 830 | The decision's schema, its arithmetic identities, the enforced conviction ceiling, the closed reason-code vocabulary, and the renderer for the fixed-shape block. Pure module: no network, no filesystem |
+| `watchlist_store.py` | 685 | Issuers followed but not owned — no quantity, no cost basis, and it never values or scores |
 | `mfn_news.py` | 647 | Nordic regulatory releases; extracts headline figures from release text |
-| `ownership_se.py` | 634 | Swedish fund ownership per ISIN, quarterly, with concentration and trend |
-| `finfact.py` | 454 | The shared provenance, temporal-validity and corroboration core (`FinancialFact`, `Verification`, `corroborate()`) every other script imports; not run directly except `--selftest` |
+| `horizon.py` | 543 | The next scheduled report date for a Nordic-listed issuer, with its source named |
+| `nordic_shares.py` | 526 | Shares outstanding per share class, market cap, 10-year daily price history (back-adjusted for splits) |
+| `numparse.py` | 518 | The one number parser: comma-versus-decimal, space grouping, the typographic minus. Replaces four |
+| `finfact.py` | 453 | The shared provenance, temporal-validity and corroboration core (`FinancialFact`, `Verification`, `corroborate()`); not run directly except `--selftest` |
 | `verify_filing.py` | 437 | Restatement detection, internal statement ties, release cross-check |
-| `esef_fundamentals.py` | 405 | IFRS annual financials from ESEF Inline XBRL |
-| `nordic_shares.py` | 507 | Shares outstanding per share class, market cap, 10-year price history |
-| `cision_news.py` | 223 | Releases for Swedish issuers that distribute via Cision, not MFN |
-| `quote.py` | 179 | Current price with timestamp, staleness note, two-source cross-check |
+| `quote.py` | 417 | Current price with timestamp and staleness note; for a Nasdaq Nordic ticker, corroborated against Nasdaq's own venue reference data as CROSS-CHECKED, CONFLICT or `not checked` |
+| `esef_fundamentals.py` | 404 | IFRS annual financials from ESEF Inline XBRL |
+| `finmath.py` | 360 | Shared financial math: CAGR from elapsed days rather than a period count, with a currency check |
+| `screen_metrics.py` | 269 | Drawdown, return windows and margin trends as pure functions |
+| `http_util.py` | 266 | One fetcher: retry with backoff on 429 and 5xx, and a collision-free cache key |
+| `cision_news.py` | 226 | Releases for Swedish issuers that distribute via Cision, not MFN |
+| `_bootstrap.py` | 124 | The sibling-import idiom, written once and correctly (`SystemExit` does not inherit from `Exception`, and two earlier copies disagreed about it) |
 
 ---
 
@@ -171,26 +200,79 @@ range and upside; Investment Score and Data Confidence side by side) followed
 by bold-labelled prose outside the fence — Why, Risk, Priced in, Watch,
 Unverified.
 
-A STANDARD or DEEP analysis has **twelve sections**, not more: verdict,
-snapshot, business and moat, financials, owners and management, valuation,
-scenarios, bear case and red flags, scorecard, thesis and triggers, Evidence,
-decision record. DEEP deepens these sections (full DCF and reverse DCF,
-computed peer set, 10-year history, ownership and guidance trends, industry
-benchmark); it never adds new ones.
+The output is in **two layers**. What the reader gets is **seven sections**,
+not more: verdict; what the company is; why the price is where it is;
+for-and-against; scenarios; what the call means in practice; the closing block
+with the signal line, the trigger table, the horizon and `Viktigast`. Each
+carries a word budget, and the budgets are the enforceable form of the
+delivered-length cap — a global cap can only be checked once the draft is
+already too long to fix. Everything else — the snapshot, the statements, the
+moat scoring, owners and management, the full valuation build, the scorecard,
+the Evidence block and the decision record — is **underlying material**:
+produced in full, printed only when the reader asks for it. DEEP deepens the
+seven sections; it never adds new ones.
 
-Every invalidation condition lives in **one trigger table**, in section 10 —
-previously the same conditions were written in four different formats across
-the document. Section 11, the **Evidence block**, carries the Data Confidence
-score, every material figure grouped by verification status (`VERIFIED`,
-`CROSS-CHECKED`, `SINGLE SOURCE`, `CONFLICT`, `STALE`, `INCOMPLETE`,
-`DATA NOT AVAILABLE`), with `SINGLE SOURCE`, `CONFLICT`, `STALE` and
-`DATA NOT AVAILABLE` printed even when empty (as `none`), and closes with a
-mandatory `TALLY` line — the structural defence against a run where nothing
-was cross-checked reading as clean, since it must print `0 of N verified`.
-Section 12, the **decision record**, is a fixed machine-comparable shape that
-must be **numerically identical to the verdict block**; any divergence between
-the two is treated as a defect rather than a nuance, which is what turns the
-repetition into a checksum.
+Every invalidation condition lives in **one trigger table**, printed once in
+the closing block — previously the same conditions were written in four
+different formats across the document. Its rows are numeric and
+filing-checkable, which is not a style rule: they are the input contract of
+`thesis_ledger.py --breaker`, and on a BUY or SELL call they are stored as the
+thesis's breakers.
+
+The **Evidence block** carries the Data Confidence score, every material figure
+grouped by verification status (`VERIFIED`, `CROSS-CHECKED`, `SINGLE SOURCE`,
+`CONFLICT`, `STALE`, `INCOMPLETE`, `DATA NOT AVAILABLE`), with `SINGLE SOURCE`,
+`CONFLICT`, `STALE` and `DATA NOT AVAILABLE` printed even when empty (as
+`none`), and closes with a mandatory `TALLY` line — the structural defence
+against a run where nothing was cross-checked reading as clean, since it must
+print `0 of N verified`.
+
+### The decision record — the v3.0.0 inversion
+
+The **decision record** is a fixed machine-comparable shape, and the direction
+of authority over it was inverted in v3.0.0. It used to be prose the model
+typed: the verdict block, the signal line and the record were three copies of
+the same numbers, called a checksum and cross-checked by nothing. Persisting a
+fourth copy would have inherited zero enforcement while adding a new failure
+mode — a stored record that outlives the prose explaining it, and lies about
+it.
+
+So the model now emits the record as JSON first and `decision_record.py`
+renders the human block from it. One source, and the copies cannot diverge.
+The module **refuses** a record rather than storing a wrong one:
+
+- `expected_return = Σ wᵢ(FVᵢ/P − 1)` with the base at its range midpoint,
+  `margin_of_safety = 1 − P/FV` to base-low and base-high, and `Σ wᵢ = 1` are
+  recomputed, and a stated figure disagreeing by more than 0.15pp is refused.
+  This removes the weakest link in the pipeline — arithmetic performed in prose
+  — without building a valuation engine.
+- A conviction above the enforced ceiling is refused.
+- A reason code outside the closed vocabulary is refused; a code invented at
+  the call site cannot be counted later.
+- An identity with neither LEI nor ISIN is refused: a decision keyed on a
+  display name cannot be matched to a later outcome, and "Volvo" is two
+  companies.
+
+What is deliberately **not** mechanical is the call itself. There is no
+weighted composite score and there must never be one — the recommendation is
+not a function of the investment score, and a score that decided the call would
+trade interpretability for the appearance of rigour. Code enforces the
+*constraints* on the judgement: hard gates, conviction caps and thesis
+breakers, each recorded as a **reason code** so a past decision can be audited
+rather than re-litigated.
+
+Reason codes record checks that already ran — `valuation_gate.py`'s eight
+refusals, `peers_se.py`'s suppressed rows, `thesis_ledger.py`'s breaker status,
+`finfact.py`'s conflicts, `earnings_quality.py`'s bands, `venues_se.py`'s
+venue routing. Nothing new is computed to justify a decision; the gap was that
+each outcome was printed as prose and then lost, so months later nobody could
+say why a multiple was missing or why conviction was LOW.
+
+The record is stored by `thesis_ledger.py --decide`, append-only, alongside the
+thesis — two objects with opposite properties, deliberately kept apart. **A
+thesis is price-free and durable; a decision is price-stamped and superseded.**
+The ledger holds no prices at all: a thesis that flips on a quote is a trade,
+not a thesis.
 
 **Investment Score and Data Confidence are never merged.** The first measures
 how good the opportunity looks; the second measures how well the evidence
@@ -246,19 +328,21 @@ restatement. On failure it prints the state and the reason rather than a
 number. A pass may still carry warnings, which are reported alongside it.
 
 ### Depth levels
+
+Each depth also carries a conviction ceiling, enforced in code — see the
+conviction paragraph further down rather than each bullet here.
+
 - **TLDR** (60–90 s): identity, price, the call, its single biggest risk.
-  Conviction capped at MEDIUM.
 - **QUICK** (2–4 min): identity, price, headline financials, multiples against
   own history, the single biggest risk, short interest and insider net for a
-  Swedish name. No Evidence block, no scenarios, no scorecard. Conviction
-  capped at MEDIUM.
+  Swedish name. No verification phase, no scenarios, no scorecard.
 - **COMPARE** (4–6 min per company): everything in QUICK plus the Moat Score
   and a light bear/base/bull, so downside and risk/reward are real — but no
   DCF, no reverse DCF, no peer set and no nine-category scorecard, and
-  therefore **no Investment Score**. Conviction capped at MEDIUM. It exists
-  specifically because QUICK runs no scorecard and no scenarios, so it cannot
-  honestly produce an Investment Score or an expected return; a comparison
-  table demanding either from a QUICK run would have to invent it.
+  therefore **no Investment Score**. It exists specifically because QUICK runs
+  no scorecard and no scenarios, so it cannot honestly produce an Investment
+  Score or an expected return; a comparison table demanding either from a
+  QUICK run would have to invent it.
 - **STANDARD** (8–12 min, default): full source chain per the registry,
   fundamentals, moat, growth, management, valuation from multiples, bear/base/
   bull, devil's advocate, scorecard, Evidence block.
@@ -278,15 +362,21 @@ separately, never merged — `DATA CONFIDENCE /100` measuring how well the
 evidence supports it.
 
 Conviction is VERY LOW / LOW / MEDIUM / HIGH / VERY HIGH and is **capped by the
-weakest input rather than averaged**. Hard caps: an unresolved conflict caps at
-LOW; a First North or Spotlight microcap caps at MEDIUM; QUICK, TLDR and
-COMPARE depth all cap at MEDIUM.
+weakest input rather than averaged** — never by the average of several caps.
+Until v3.0.0 this was prose the model was asked to self-apply, and
+`grep conviction scripts/*.py` returned nothing. It is now computed from the
+depth and the run's reason codes, and a record above the ceiling is refused
+rather than warned about: TLDR, QUICK and COMPARE depth cap at MEDIUM; an MTF
+microcap caps at MEDIUM; an unresolved conflict, a fired thesis breaker, or
+data confidence below the floor each cap at LOW. The ladder and the caps have
+exactly one home, `references/data-quality.md` §7.
 
-Decision record: ticker, legal entity, current price with timestamp, reporting
-currency, bear/base/bull fair value, expected return, margin of safety,
-investment score, data confidence, conviction, recommendation, and the two or
-three assumptions the call actually rests on — numerically identical to the
-verdict block that opened the analysis.
+The decision record carries: ticker, legal entity, LEI or ISIN, current price
+with timestamp and source, quote and reporting currency, bear/base/bull fair
+value with scenario weights, expected return, margin of safety, investment
+score, data confidence, conviction with the caps that applied, recommendation,
+the reason codes with their severity, and the two or three assumptions the call
+rests on. The verdict block that opened the analysis is written **from** it.
 
 ---
 
@@ -381,12 +471,72 @@ reason the review happened at all, and all nine are now fixed and covered:
     presented with the same confidence as one confirmed against all listed
     classes.
 
+### Structural corrections in v3.0.0
+
+21. **The decision record was three uncrosschecked copies.** The verdict block,
+    the signal line and the record carried the same numbers with any divergence
+    treated as a defect — but three prose copies inside one document are
+    cross-checked by nothing. The model now emits one validated record and the
+    block is rendered from it.
+22. **The conviction caps were unenforced.** They were documented in two places
+    as prose the model should remember. They are now computed and a record
+    above the ceiling is refused; the prose has one home instead of two.
+23. **The trigger table was computed and then discarded.** Every STANDARD run
+    produced numeric, filing-checkable thresholds that are literally the thesis
+    ledger's input contract, and then threw them away — so the ledger stayed
+    empty and the portfolio review's layer-1 breaker check could never fire on
+    anything. `/analyze` now writes the thesis and stores the decision.
+24. **The split-adjustment claim was undated and circular.**
+    `corporate_actions.py` cited `nordic_shares.py`'s docstring, which was the
+    same unmeasured assertion, and both said "unadjusted". Four dated splits in
+    both directions (Mycronic 2:1, Investor A/B 4:1, Bambuser 1:30 reverse,
+    Nobia 1:10 reverse) show no discontinuity at the effective date: the series
+    **is** back-adjusted for splits. The hazard that replaces the old one is
+    named in the instruction layer — never apply
+    `split_adjustment_factor()` to a price, only to a per-share fundamental,
+    or it double-adjusts.
+25. **Four number parsers that did not agree.** `venues_se.py` said "the one
+    number parser in this toolkit — never a second parser"; there were four,
+    each a genuine independent fix, three of which were never shared. A new
+    script had a one-in-four chance of copying the naive version.
+    `numparse.py` is the union of all four.
+26. **Two CAGR implementations carrying the same two bugs.** A period-count
+    exponent printed "2y CAGR +24.6%" for a true +15.9% where a year was
+    missing from the series, and neither checked currency, so Betsson's
+    SEK-to-EUR redenomination compounded one unit against another.
+    `finmath.py` derives the exponent from elapsed days and refuses a mixed-
+    currency series.
+27. **The screen pipeline existed in two divergent copies.**
+    `screen_value.py` aliased 18 names out of `screen_digest.py`'s module
+    globals, with a full second reimplementation in an `else:` branch — logic
+    both scripts' correctness depends on, in two places that could silently
+    drift, and a dependency invisible to grep. `market_universe.py` is now the
+    one implementation.
+28. **Fifteen hand-rolled HTTP fetchers, one of which retried.** The free,
+    keyless, rate-limited sources this toolkit lives on return 429 under
+    ordinary use and succeed on the next try; only `macro_se.py` retried. Three
+    of the hand-rolled cache-key functions truncated a sanitised key without
+    hashing it — the exact collision `macro_se.py`'s own docstring warns
+    about. `http_util.py` generalises the retry and always hashes.
+29. **A cross-check advertised after its removal.** `quote.py`'s US-listings
+    cross-check went out with US coverage, but the docs kept promising a
+    "two-source cross-check" on every price. There is now a real second source
+    for a Nasdaq Nordic ticker — Nasdaq's own venue reference data — reported
+    as CROSS-CHECKED, CONFLICT or `not checked`, with `not checked` never
+    folded into a clean result.
+
 ---
 
 ## 7. Known gaps — this is where I want your help
 
 Be aware these are known. Tell me how to solve them *within the constraints*, or
 tell me honestly that one cannot be solved.
+
+Four gaps from the previous version of this brief have moved into section 6 and
+are no longer open: the decision record now persists in a validated shape, the
+conviction caps are enforced, the thesis ledger is actually written to, and the
+price series' split adjustment is measured rather than asserted. What remains
+below is what those did not fix.
 
 ### The TTM bridge exists now, and its reliability is the open question
 
@@ -418,10 +568,13 @@ misfire before it reaches a multiple?
 - **Net debt/EBITDA is not computable from ESEF alone.** Depreciation and
   non-current borrowings are largely untagged in the notes, so this ratio
   depends on a human reading the report.
-- **No fair-value calculator.** The valuation arithmetic — the DCF, the
-  reverse DCF, the scenario weighting — is still done by the language model in
-  prose, checked by the valuation gate for temporal validity but not
-  independently computed by a script.
+- **No fair-value calculator, though the last step of it is now checked.** The
+  DCF and the reverse DCF are still done by the language model in prose. What
+  changed is the arithmetic that turns scenarios into a headline number:
+  `decision_record.py` recomputes the expected return, both margins of safety
+  and the weight sum, and refuses the record when they disagree. The scenario
+  *values* remain judgement; the weighting of them is no longer a hand
+  calculation nobody checked.
 - **No analyst consensus.** None is available free. The system substitutes a
   reverse DCF and is explicit that it is not consensus.
 - **No earnings call transcripts.** None available free.
@@ -430,15 +583,27 @@ misfire before it reaches a multiple?
   total.
 - **No aggregate short-interest history.** The regulator publishes only a
   current snapshot; the trend is computed on the named ≥0.5% base.
-- **No point-in-time storage, in the sense of a backtest engine.** The
-  toolkit carries publication dates on the datapoints it fetches and refuses
-  to claim historical knowledge it cannot evidence. `thesis_ledger.py` adds a
-  genuinely new piece — a stored, falsifiable thesis with numeric breakers
-  that can be re-evaluated in HISTORICAL mode against what was knowable on a
-  past date — but that is a re-test of one stated thesis, not a backtesting
-  capability across arbitrary strategies, and it is not presented as one.
-- **Price history is unadjusted** for splits and dividends.
-- **No dividend-per-share history**, so no yield or total-return analysis.
+- **Historical backtesting is still not defensible, and three structural facts
+  are why.** `esef_fundamentals.py` returns the latest restated figure, so the
+  as-originally-reported number a past decision would have to be graded against
+  does not exist. Every universe build queries the live listing, so a company
+  that delisted, merged or failed is invisible to any "what would the screen
+  have said" reconstruction — survivorship bias is structural, not a data gap
+  a better query closes. And there is no consensus history and no historical
+  share register, so "as investors knew it then" cannot be rebuilt for anything
+  beyond price. What v3.0.0 adds is the one measurement that needs none of
+  them: `calibration.py` attaches realised outcomes at 3, 6 and 12 months to
+  decisions stored **from now on**, prints `INSUFFICIENT SAMPLE` below its
+  minimum rather than a hit rate, and feeds nothing back into any score, cap or
+  threshold. Forward-only, read-only, and not a backtester.
+- **No point-in-time price and no point-in-time share count.** Publication
+  dates travel with every datapoint and `thesis_ledger.py --evaluate --as-of`
+  re-plays one stated thesis against what was knowable on a past date, but
+  there is no stored history of what a price or a register said on an arbitrary
+  earlier day.
+- **Dividend adjustment in the price series is unverified**, so no total-return
+  or dividend-yield analysis off it, and there is no dividend-per-share
+  history. Splits are settled — see item 24 above.
 - **No segment data** — ESEF tags primary statements only, not the notes.
 - **MTF issuers (First North, Spotlight, NGM) have no ESEF at all**, and may
   additionally report under K3 rather than IFRS, so their financials come from

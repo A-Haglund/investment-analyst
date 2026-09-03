@@ -49,6 +49,12 @@ outcomes verified live 2026-09-01, as-of the same date):
     python valuation_gate.py "KebNi"            # FAILS - First North, no ESEF
     python valuation_gate.py "Assa Abloy"       # PASSES - fresh ttm_engine.py TTM, matching currencies
     python valuation_gate.py "Sandvik" --json --explain
+    python valuation_gate.py --selftest        # offline, no network, no company
+
+`--json` carries a `reason_codes` list of {code, severity, detail} entries
+alongside the human `report`, drawn from decision_record.REASON_CODES so a
+refusal can be stored and counted later instead of only read. The text output
+is unchanged.
 
 Coverage is European (Nordic/French ESEF issuers) only - this toolkit does
 not query SEC EDGAR anywhere, so a US ticker simply fails to resolve through
@@ -98,9 +104,21 @@ def _load(name):
 
 
 def _soft_load(name):
+    """Load a sibling script, or return None and say so on stderr.
+
+    Catches (Exception, SystemExit), not Exception. SystemExit derives from
+    BaseException, so it is NOT an Exception and used to escape this handler
+    entirely: a sibling that calls sys.exit() while its module body runs -
+    which several of them do on a failed precondition - killed the gate
+    outright instead of degrading it to the weaker basis every check below is
+    written to tolerate. portfolio_review.py:87 already had this right
+    ("sibling scripts raise SystemExit, which is not an Exception"); this file
+    did not, and the asymmetry meant one identical broken sibling degraded one
+    caller and crashed the other. A gate that crashes is not a gate.
+    """
     try:
         return _load(name)
-    except Exception as e:  # noqa: BLE001 - a sibling script may be mid-edit or unreachable
+    except (Exception, SystemExit) as e:  # noqa: BLE001 - a sibling may be mid-edit, unreachable, or may sys.exit()
         print("(valuation_gate: %s not available - %s)" % (name, e), file=sys.stderr)
         return None
 
@@ -125,7 +143,7 @@ corporate_actions = _soft_load("corporate_actions")
 # do not import it hard). Its absence must not break this file today.
 try:
     ttm_engine = _load("ttm_engine")
-except Exception:
+except (Exception, SystemExit):     # same defect as _soft_load carried: SystemExit is not an Exception
     ttm_engine = None
 
 
@@ -173,13 +191,118 @@ def _as_date(x):
 
 
 # ---------------------------------------------------------------------------
+# ONE staleness rule, shared with peers_se.py.
+# ---------------------------------------------------------------------------
+# This file and peers_se.py both answer "is this dated figure past the life of
+# its class", and each used to answer it inline: check_price_timestamp()
+# compared against FRESHNESS_DAYS["price"] here, while peers_se.py compared a
+# fiscal-year end against FRESHNESS_DAYS["annual_financials"] with a hardcoded
+# 460-day fallback of its own. Same rule, two copies, and a change to either
+# threshold would silently reach only one of them.
+# finfact.FRESHNESS_DAYS was already the common CONSTANT; only the comparison
+# needed a single home, and this is it. peers_se.py calls
+# annual_figure_past_life() below.
+#
+# What is deliberately NOT unified is the two files' CONTROL FLOW. This module
+# is a hard gate: on failure it prints the reason instead of a number.
+# peers_se.py warns and suppresses individual columns, because most Nordic
+# issuers fail at least one of the eight checks (Sandvik, Evolution, Volvo and
+# KebNi all do; only Assa Abloy passes) and routing the peer table through the
+# hard gate would blank P/E, EV/EBIT and EV/Sales for nearly every row and
+# destroy the comparison the table exists to make. Two modes, one threshold.
+# ---------------------------------------------------------------------------
+
+def past_life(period_end, freshness_key, as_of=None):
+    """(past_life, age_days, limit) for a dated figure of a given class.
+
+    past_life is None - never False - when FRESHNESS_DAYS has no entry for the
+    class, and when the date cannot be parsed: an unknown freshness class must
+    not be permitted to claim freshness. Mirrors
+    finfact.FinancialFact.staleness() for the callers that hold a bare date
+    rather than a whole fact.
+    """
+    limit = FRESHNESS_DAYS.get(freshness_key)
+    try:
+        d = _as_date(period_end)
+    except (TypeError, ValueError):
+        d = None
+    if d is None:
+        return None, None, limit
+    ref = _as_date(as_of) or datetime.date.today()
+    age = (ref - d).days
+    if limit is None:
+        return None, age, None
+    return age > limit, age, limit
+
+
+def annual_figure_past_life(period_end, as_of=None):
+    """past_life() for the one class peers_se.py needs: an ESEF ANNUAL figure.
+
+    Named separately because it is the shared entry point, not an
+    implementation detail: peers_se.py's STALE FUNDAMENTALS warning calls
+    exactly this, so "past the life of an annual figure" has one threshold and
+    one comparison across both files.
+    """
+    return past_life(period_end, "annual_financials", as_of)
+
+
+# ---------------------------------------------------------------------------
+# Reason codes: the machine-readable half of every verdict below.
+# ---------------------------------------------------------------------------
+# The eight checks have only ever reported in prose. Prose is what a reader
+# needs and what nothing downstream can count: a decision recorded after a
+# refused multiple could not say WHICH check refused it, so "how often does
+# the currency check fire" and "was this call made over a stale figure" were
+# both unanswerable after the fact. Every check now also carries a code from
+# decision_record.REASON_CODES.
+#
+# That vocabulary is CLOSED on purpose: decision_record.validate() raises on a
+# code that is not in its dict, precisely so a code invented at a call site
+# cannot become an uncountable string in a stored record. No entry may be
+# added here without adding it there first.
+#
+# Nothing about the human output changes. _format_report() reads only
+# status/check/detail and never sees these codes, so every existing text line
+# is byte-for-byte what it was; the codes travel in the JSON output and in
+# gate_reason_codes().
+CHECK_REASON_CODES = {
+    "price_timestamp":   "GATE_PRICE_STALE",
+    "period_lag":        "GATE_PERIOD_INCOMPATIBLE",
+    "publication_date":  "GATE_PUBLICATION_UNKNOWN",
+    "share_count":       "GATE_SHARE_COUNT_UNCERTAIN",
+    "currency":          "GATE_CURRENCY_MISMATCH",
+    "corporate_actions": "GATE_CORPORATE_ACTION",
+    "ttm_completeness":  "GATE_TTM_INCOMPLETE",
+    "restatement":       "GATE_RESTATEMENT_SUPERSEDED",
+}
+
+# "input_types" - the provenance pre-check inside gate_detail() - is
+# deliberately ABSENT from that map. It is not one of the eight: it fires when
+# the caller handed the gate a bare float instead of a fact, which is a
+# programming error, and REASON_CODES has no entry for it. Filing it under the
+# nearest-looking GATE_* code would record a caller's bug as a data-quality
+# finding about the issuer, and minting a code here is exactly what the closed
+# vocabulary exists to stop. It therefore emits no code at all, and its prose
+# - unchanged - remains the only report of it.
+
+# A failed check blocks the number. A check that could not be fully verified
+# still lets the number stand, but the reader must be told. A PASS is not a
+# reason for anything and emits nothing.
+STATUS_SEVERITY = {"FAIL": "BLOCK", "WARN": "WARN"}
+
+
+# ---------------------------------------------------------------------------
 # Per-check results. Each check returns one of these; nothing here ever
 # returns a bare bool, so the reason a check failed travels with the verdict.
 # ---------------------------------------------------------------------------
 
 def _res(status, check, state, detail):
+    # reason_code travels ON the result rather than being re-derived by every
+    # consumer: the mapping is then impossible to get out of step with the
+    # check that produced it. An unmapped check (see "input_types" above)
+    # carries None, and gate_reason_codes() skips it rather than guessing.
     return {"check": check, "status": status, "state": state.value if state else None,
-            "detail": detail}
+            "detail": detail, "reason_code": CHECK_REASON_CODES.get(check)}
 
 
 def _ok(check, detail):
@@ -215,7 +338,9 @@ def check_price_timestamp(price_fact, as_of):
         return _fail("price_timestamp", State.DATA_STALE,
                      "the price is %d days old (%s), past the %d-day limit for calling a quote "
                      "current." % (age, ts, PRICE_MAX_AGE_DAYS))
-    if age > FRESHNESS_DAYS.get("price", 1):
+    # Same threshold as before (FRESHNESS_DAYS["price"]), now read through the
+    # shared helper so the comparison itself is not a second copy.
+    if past_life(ts, "price", as_of)[0]:
         return _warn("price_timestamp", State.DATA_STALE,
                      "the price is %d day(s) old (%s) - normal across a weekend or holiday "
                      "close, but confirm before treating it as live." % (age, ts))
@@ -455,6 +580,51 @@ def _run_checks(price_fact, earnings_fact, shares_fact, context):
     return results
 
 
+def _short(detail, limit=180):
+    """A check's prose cut to its first sentence, for a reason code's detail.
+
+    The full prose is a paragraph written for a human reading one gate report.
+    A reason code's detail is read inside a stored decision record alongside a
+    dozen others, so it is cut to the first sentence and hard-capped. Nothing
+    is lost: the full text is still in the `checks` list beside it.
+    """
+    text = " ".join(str(detail or "").split())
+    head = text.split(". ")[0].rstrip(".")
+    if not head:
+        head = text
+    if len(head) > limit:
+        head = head[:limit - 3].rstrip() + "..."
+    return head
+
+
+def gate_reason_codes(results):
+    """gate_detail()'s results as decision_record reason-code entries.
+
+    Returns [{"code", "severity", "detail"}, ...] ready to drop straight into
+    a decision record's `reason_codes` field: FAIL becomes BLOCK, WARN becomes
+    WARN, PASS emits nothing. Order follows the order the checks ran in.
+
+    One entry per code. If the same code somehow arrives twice, BLOCK wins, so
+    a caller counting BLOCKs can never be told that a blocking check merely
+    warned.
+    """
+    by_code, order = {}, []
+    for r in results or []:
+        code = r.get("reason_code") or CHECK_REASON_CODES.get(r.get("check"))
+        severity = STATUS_SEVERITY.get(r.get("status"))
+        if not code or not severity:
+            continue
+        entry = {"code": code, "severity": severity,
+                 "detail": _short(r.get("detail"))}
+        prev = by_code.get(code)
+        if prev is None:
+            by_code[code] = entry
+            order.append(code)
+        elif prev["severity"] == "WARN" and severity == "BLOCK":
+            by_code[code] = entry
+    return [by_code[c] for c in order]
+
+
 def _wrap(prefix, text, width=78):
     indent = " " * (len(prefix) + 1)
     return textwrap.fill(text, width=width, initial_indent=prefix + " ",
@@ -487,9 +657,14 @@ def gate_detail(price_fact, earnings_fact, shares_fact=None, **context):
     """Run every spec-Sec7 check and return (passed, states, report, results).
 
     `results` is the full per-check record: [{"check", "status", "state",
-    "detail"}, ...], status one of PASS/WARN/FAIL. Use this when you want more
-    than the headline verdict - `gate()` below is the same call with only the
-    first three returned, for callers that just need a go/no-go.
+    "detail", "reason_code"}, ...], status one of PASS/WARN/FAIL. Use this when
+    you want more than the headline verdict - `gate()` below is the same call
+    with only the first three returned, for callers that just need a go/no-go.
+
+    `reason_code` is the decision_record.REASON_CODES entry for that check, or
+    None for the provenance pre-check that has no entry (see
+    CHECK_REASON_CODES). Pass the whole list to gate_reason_codes() to get the
+    {code, severity, detail} form a decision record stores.
     """
     # A gate that crashes on a malformed argument is not a gate. Validate the
     # arguments before anything dereferences them - the setdefault below already
@@ -1091,16 +1266,134 @@ def _fact_summary(fact):
            "source": fact.source, "note": fact.note}
 
 
+# ===========================================================================
+# Offline selftest. No network, no siblings: synthetic facts only, so this
+# still runs when every data source is down and when ttm_engine.py or
+# share_semantics.py failed to load.
+# ===========================================================================
+
+def _fact(metric, value, period_end, **kw):
+    kw.setdefault("publication_date", period_end)
+    return FinancialFact(metric, value, kw.pop("source", "esef"), period_end, **kw)
+
+
+def selftest():
+    """Assert the invariants the reason-code channel rests on.
+
+    The one that matters most is the LAST group: every code this file can emit
+    must exist in decision_record.REASON_CODES. A code that does not is not a
+    cosmetic problem - decision_record.validate() refuses the whole record it
+    appears in, so the gate would block a number and then block the recording
+    of why.
+    """
+    today = datetime.date(2026, 8, 31)
+    failures = []
+
+    def check(label, cond):
+        print("  %-62s %s" % (label, "ok" if cond else "FAIL"))
+        if not cond:
+            failures.append(label)
+
+    price = _fact("price", 250.0, today.isoformat(), currency="SEK",
+                  source="yahoo", freshness_key="price")
+    stale_earnings = _fact("net_income", 100.0, "2024-12-31",
+                           publication_date="2025-02-20", currency="SEK",
+                           freshness_key="annual_financials")
+    shares = _fact("shares_outstanding", 1e6, today.isoformat(),
+                   source="nasdaq_reference", note="diluted_weighted_average",
+                   verification=Verification.VERIFIED)
+
+    print("valuation_gate selftest")
+    print(" the shared staleness rule")
+    check("an FY2024-12-31 annual is past its life by 2026-08-31",
+          annual_figure_past_life("2024-12-31", today)[0] is True)
+    check("a 2026-06-30 annual is not",
+          annual_figure_past_life("2026-06-30", today)[0] is False)
+    check("an unparseable date claims nothing, never freshness",
+          annual_figure_past_life("not-a-date", today)[0] is None)
+    check("the limit comes from finfact.FRESHNESS_DAYS, not a local literal",
+          annual_figure_past_life("2024-12-31", today)[2]
+          == FRESHNESS_DAYS["annual_financials"])
+
+    print(" the eight checks map onto codes, the pre-check does not")
+    check("all eight checks are mapped", len(CHECK_REASON_CODES) == 8)
+    check("input_types is deliberately unmapped",
+          "input_types" not in CHECK_REASON_CODES)
+
+    print(" the Sandvik shape emits the period code as a BLOCK")
+    passed, _states, report, results = gate_detail(
+        price, stale_earnings, shares, as_of=today, metric_name="P/E")
+    codes = gate_reason_codes(results)
+    by_code = {c["code"]: c for c in codes}
+    check("the gate still fails it", passed is False)
+    check("the human report still says FAILED",
+          report.startswith("VALUATION INTEGRITY: FAILED"))
+    check("GATE_PERIOD_INCOMPATIBLE is emitted",
+          "GATE_PERIOD_INCOMPATIBLE" in by_code)
+    check("and it blocks", by_code.get("GATE_PERIOD_INCOMPATIBLE",
+                                       {}).get("severity") == "BLOCK")
+    check("no PASS emitted a code",
+          len(codes) <= len([r for r in results if r["status"] != "PASS"]))
+    check("details are cut to one short sentence",
+          all(len(c["detail"]) <= 180 for c in codes))
+
+    print(" a currency mismatch blocks on its own code")
+    eur_earnings = _fact("net_income", 100.0, "2026-06-30",
+                         publication_date="2026-07-20", currency="EUR",
+                         freshness_key="interim_financials")
+    _p, _s, _r, results = gate_detail(price, eur_earnings, shares, as_of=today)
+    by_code = {c["code"]: c for c in gate_reason_codes(results)}
+    check("GATE_CURRENCY_MISMATCH blocks",
+          by_code.get("GATE_CURRENCY_MISMATCH", {}).get("severity") == "BLOCK")
+
+    print(" an fx_rate downgrades the same check to WARN, not to silence")
+    _p, _s, _r, results = gate_detail(price, eur_earnings, shares, as_of=today,
+                                      fx_rate=11.3)
+    by_code = {c["code"]: c for c in gate_reason_codes(results)}
+    check("GATE_CURRENCY_MISMATCH warns",
+          by_code.get("GATE_CURRENCY_MISMATCH", {}).get("severity") == "WARN")
+
+    print(" every emitted code exists in the closed vocabulary")
+    try:
+        dr = _soft_load("decision_record")
+    except Exception:                      # noqa: BLE001
+        dr = None
+    if dr is None or not hasattr(dr, "REASON_CODES"):
+        print("  %-62s %s" % ("decision_record.py not loadable - vocabulary "
+                              "check skipped", "skip"))
+    else:
+        unknown = sorted(c for c in CHECK_REASON_CODES.values()
+                         if c not in dr.REASON_CODES)
+        check("no invented codes (%s)" % (", ".join(unknown) or "none"),
+              not unknown)
+        check("BLOCK/WARN are the severities decision_record accepts",
+              set(STATUS_SEVERITY.values()) <= set(dr.SEVERITIES))
+
+    print("")
+    print("%d check(s) failed" % len(failures) if failures else "all checks passed")
+    return 1 if failures else 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("company", help='European (Nordic/French ESEF) company name, '
-                                    'e.g. "Sandvik", "AB Volvo", "Evolution", "KebNi"')
+    # nargs="?" only so that --selftest can run without naming a company; a
+    # missing company is still an argparse error, raised explicitly below.
+    ap.add_argument("company", nargs="?",
+                    help='European (Nordic/French ESEF) company name, '
+                         'e.g. "Sandvik", "AB Volvo", "Evolution", "KebNi"')
     ap.add_argument("--as-of", help="YYYY-MM-DD, default today")
     ap.add_argument("--json", action="store_true", dest="as_json")
     ap.add_argument("--explain", action="store_true",
                     help="print every check (PASS included), not just failures/warnings")
+    ap.add_argument("--selftest", action="store_true",
+                    help="run the offline invariant checks and exit (no network)")
     args = ap.parse_args()
+
+    if args.selftest:
+        sys.exit(selftest())
+    if not args.company:
+        ap.error("the following arguments are required: company")
 
     as_of = _as_date(args.as_of) if args.as_of else datetime.date.today()
 
@@ -1109,7 +1402,8 @@ def main():
     if bundle is None:
         if args.as_json:
             print(json.dumps({"company": args.company, "passed": False,
-                              "report": "VALUATION INTEGRITY: FAILED", "notes": notes},
+                              "report": "VALUATION INTEGRITY: FAILED",
+                              "reason_codes": [], "notes": notes},
                              indent=2, ensure_ascii=False))
         else:
             print("VALUATION INTEGRITY: FAILED")
@@ -1129,6 +1423,11 @@ def main():
             "company": args.company, "data_path": path, "as_of": as_of.isoformat(),
             "metric_name": ctx.get("metric_name"), "passed": passed,
             "states": [s.value for s in states], "report": report,
+            # Additive, alongside "report" rather than instead of it: the text
+            # is what SKILL.md and the reference docs describe and what other
+            # code parses, so it is untouched. This is the same verdict in the
+            # form a decision record can store and a later run can count.
+            "reason_codes": gate_reason_codes(results),
             "checks": results,
             "inputs": {"price": _fact_summary(bundle["price_fact"]),
                       "earnings": _fact_summary(bundle["earnings_fact"]),

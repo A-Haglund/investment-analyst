@@ -51,7 +51,7 @@ basis for market cap is not.
 | **Macro, Sweden** | SCB, Riksbanken | Eurostat, ECB for comparability | — |
 | **Industry benchmark** | SCB by SNI (`macro_se.py --industry`, `--all-industries`) | Computed peer aggregate | A remembered "typical" margin |
 | **Price, current** | Nasdaq (`nordic_shares.py`, `quote.py`) | Nordic tickers when `quote.py` fails: the tier-4 HTML fallbacks below, in the order `SKILL.md` gives (`borskollen.se`, `allaaktier.se`, `aktiespararna.se`) — **manual lookups, not fetched by any script** — recorded as `SINGLE SOURCE` | Any price without a timestamp |
-| **Price, historical** | Nasdaq price history — **unadjusted** | — | Raw ratios across a split |
+| **Price, historical** | Nasdaq price history — **back-adjusted for splits** (measured, four dated cases); dividend treatment unverified | — | Applying a split factor on top of it; a total-return claim |
 | **Corporate actions** | Nasdaq CNS "Total number of voting rights and capital"; MFN `sub:ca:*` tags | Cision releases | Inference from a price gap alone |
 | **Legal entity, orgnr** | EU VIES; ESMA FIRDS for ISIN↔LEI↔MIC | GLEIF | A name match alone |
 | **Company identity** | `company_resolve.py` — must reach sufficient confidence before analysis starts | — | Proceeding on an ambiguous name |
@@ -80,7 +80,7 @@ All entries below are free and keyless unless stated.
 | Source | Country | Supplies | Coverage | Frequency | Key limitation |
 |---|---|---|---|---|---|
 | **ESEF / filings.xbrl.org** | SE NO DK FI FR + EU | Tagged IFRS annual financials | Regulated markets only | Annual, **lags unevenly** | No MTFs, no quarters, primary statements only, extension tags invisible |
-| **Nasdaq Nordic** | SE NO DK FI IS | Registered share count per listed class (incl. treasury), segment, ICB, index membership, price, 10y history, observation status, CNS announcements | 743 Stockholm lines incl. First North | Live / daily | Unlisted classes invisible; the endpoint's own `marketCap` figure must not be used (see Market cap row above); prices unadjusted; default urllib UA hangs |
+| **Nasdaq Nordic** | SE NO DK FI IS | Registered share count per listed class (incl. treasury), segment, ICB, index membership, price, 10y history, observation status, CNS announcements | 743 Stockholm lines incl. First North | Live / daily | Unlisted classes invisible; the endpoint's own `marketCap` figure must not be used (see Market cap row above); prices back-adjusted for splits, dividend treatment unverified; default urllib UA hangs |
 | **FI Insynsregistret** | SE | PDMR insider transactions | All Swedish venues incl. MTFs | T+1 | UTF-16 CSV; export capped at 1000 rows |
 | **FI Blankningsregistret** | SE | Short positions, history to 2010-05-10 per the file (predates the EU Short Selling Regulation's 2012-11-01 application — verify against the file, not assumed exact) | Swedish issuers | T+1 | Names only ≥0.5%; aggregate from 0.1% |
 | **FI Fondinnehav** | SE | Swedish fund holdings per ISIN | Swedish UCITS only | Quarterly, 4–5 month lag | A floor on ownership, not the total |

@@ -166,15 +166,36 @@ Rules:
 - Never reconstruct a past view from present data and describe it as
   contemporaneous.
 
-The toolkit does not currently store a point-in-time history. What it can do is
-carry publication dates on the datapoints it fetches and refuse to claim
-historical knowledge it cannot evidence. Say so rather than implying a
-backtesting capability that does not exist.
+The toolkit does not store a point-in-time history. What it can do is carry
+publication dates on the datapoints it fetches and refuse to claim historical
+knowledge it cannot evidence. Say so rather than implying a backtesting
+capability that does not exist.
+
+Three structural facts keep it that way, and none of them is a data gap a
+better query would close. `esef_fundamentals.py` returns the latest restated
+figure, so the as-originally-reported number a past decision would have to be
+graded against does not exist. Every universe build queries the live listing,
+so a company that delisted or merged is invisible to any reconstruction —
+survivorship bias is structural. And there is no consensus history and no
+historical share register, so "as investors knew it then" cannot be rebuilt
+for anything beyond price.
+
+What v3.0.0 adds instead is **forward-only** measurement.
+`scripts/calibration.py` attaches a realised outcome to a decision that was
+stored with a validated price and a dated verdict, at 3, 6 and 12 months. That
+triangle needs none of the three facts above. It is not a backtest, it is not
+presented as one, and it feeds nothing back: no score, cap or threshold is
+adjusted from an outcome. A bucket below its minimum sample prints
+`INSUFFICIENT SAMPLE` rather than a hit rate, because a hit rate on four
+decisions is noise wearing the costume of evidence.
 
 ## 7. Conviction
 
-Conviction is confidence in the analysis, not enthusiasm for the stock. It is
-capped by the weakest input, not averaged across them.
+**This section is the normative source for the conviction ladder and its
+caps.** SKILL.md states no cap value and points here. Where a command file
+names its own depth's ceiling, it is quoting this table, not setting it.
+
+Conviction is confidence in the analysis, not enthusiasm for the stock.
 
 | Level | Requires |
 |---|---|
@@ -184,19 +205,44 @@ capped by the weakest input, not averaged across them.
 | **LOW** | Data confidence ≥ 40, or material gaps, or an unresolved conflict, or thin liquidity |
 | **VERY LOW** | Data confidence < 40, opaque accounting, unproven model, or scenario values spanning a very wide range |
 
-Hard caps, regardless of anything else:
+### The caps are enforced, not self-applied
 
-- A QUICK-depth run caps at **MEDIUM**.
-- A TLDR-depth run caps at **MEDIUM**.
-- A COMPARE-depth run caps at **MEDIUM** — it produces no scorecard and
-  therefore no Investment Score.
-- An unresolved `CONFLICT` on a material figure caps at **LOW**.
-- No ESEF and no verified financials caps at **LOW**.
-- A First North or Spotlight microcap caps at **MEDIUM**.
+Until v3.0.0 the caps below were prose the model was asked to remember, and
+`grep conviction scripts/*.py` returned nothing. They are now computed by
+`scripts/decision_record.py`, which **refuses a decision record whose
+conviction exceeds the ceiling** rather than storing it and printing a warning.
 
-**A strong valuation with weak evidence is `BUY — LOW CONVICTION`, not a strong
-buy.** Write it that way. Hiding uncertainty behind a confident recommendation
-is the specific failure this whole framework exists to prevent.
+| Cap | Fires on | Ceiling |
+|---|---|---|
+| `CAP_DEPTH_TLDR` | depth TLDR | MEDIUM |
+| `CAP_DEPTH_QUICK` | depth QUICK | MEDIUM |
+| `CAP_DEPTH_COMPARE` | depth COMPARE | MEDIUM |
+| `CAP_VENUE_MICROCAP` | reason code `VENUE_MICROCAP` — a microcap on First North, Spotlight or NGM | MEDIUM |
+| `CAP_CONFLICT` | reason code `CONFLICT_UNRESOLVED` on a material figure | LOW |
+| `CAP_THESIS_BROKEN` | reason code `THESIS_BROKEN` — a stored breaker has fired | LOW |
+| `CAP_DATA_CONFIDENCE` | reason code `DATA_CONFIDENCE_LOW` — data confidence below the floor of 40 (§5) | LOW |
+
+**The weakest input sets the ceiling; the caps are never averaged.** A microcap
+run at QUICK depth with an unresolved conflict is capped at LOW by the
+conflict, not at MEDIUM by the average of the three. The record prints every
+cap that applied, not only the binding one, so a later reader can see which
+constraint did the work.
+
+Three consequences worth stating plainly:
+
+- **A depth cap needs nothing from you.** The depth is a field on the record;
+  the ceiling follows from it.
+- **Every other cap keys on a reason code**, so a code you fail to attach is a
+  cap that does not fire. Attaching them is part of the analysis, not
+  bookkeeping — this is where a confident-looking wrong answer would still get
+  through. No ESEF and no verified financials is exactly the case that belongs
+  under `DATA_CONFIDENCE_LOW`.
+- **The ceiling is a ceiling.** It permits a lower conviction and never raises
+  one: the ladder above still has to be satisfied on its own terms.
+
+**A strong valuation with weak evidence is `KÖP — LÅG ÖVERTYGELSE`, not a strong
+buy** (SKILL.md §13). Write it that way. Hiding uncertainty behind a confident
+recommendation is the specific failure this whole framework exists to prevent.
 
 ## 8. What this changes in the output
 
@@ -205,13 +251,20 @@ Two numbers, never merged and never averaged:
 - **Investment Score** — how good the opportunity looks.
 - **Data Confidence** — how well we actually know it.
 
-The verdict and the decision record carry the pair together — on the third
-line of the verdict block, and again in the decision record. The Evidence
-header carries Data Confidence alone. Those are the only three places, and all
-three must agree on the value. Anywhere else is a fourth home for a number that
-already has one.
+The verdict block (the main answer) carries the pair together on the third line.
+The decision record and the Evidence header (both underlying material) repeat the
+same values. Those are the only three places, and all three must agree on the
+value. Anywhere else is a fourth home for a number that already has one.
 
 A reader who stops after the recommendation line must still be able to see that
 the second number is low. That is why the conviction — which is capped by data
 confidence, per §7 — sits on the recommendation line itself rather than in a
 footnote.
+
+**How uncertainty reaches the reader:** Tags (FACT, ESTIMATE, ASSUMPTION,
+OPINION) and verification statuses (SINGLE SOURCE, CONFLICT, DATA NOT AVAILABLE)
+govern the analytical work but do not appear in the delivered answer. Where such
+a figure is material to the call, its limitation reaches the reader as a
+plain-language clause per SKILL.md §7 rather than as notation. The tags and
+statuses themselves appear only in the Evidence block and decision record, which
+are underlying material printed on request.

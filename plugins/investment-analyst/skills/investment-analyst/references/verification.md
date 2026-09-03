@@ -125,12 +125,16 @@ Confirm the reporting currency from the filing, not the listing venue. Evolution
 AB is listed in Stockholm, quoted in SEK, and reports in EUR. Both fundamentals
 scripts print the currency; read it.
 
-## Reporting it — the Evidence block
+## Reporting it — the Evidence block (underlying material)
+
+The Evidence block is **underlying material** per SKILL.md §6: produced in full
+on every STANDARD and DEEP run, printed only when the reader requests to see
+the underlying material. It is never part of the delivered answer.
 
 One block carries all of it: the data-confidence score, the verification result
-for every material figure, and everything that could not be checked. It sits at
-section 11. There is no separate `DATA QUALITY` block and no "data confidence"
-paragraph elsewhere in the body — **this is the single home**.
+for every material figure, and everything that could not be checked. There is no
+separate `DATA QUALITY` block and no "data confidence" paragraph elsewhere in
+the body — **this is the single home** when it is printed.
 
 Figures are **grouped by status**, strongest first, so the reader sees the shape
 of the evidence before reading a single line. The score opens the block; the
@@ -174,7 +178,8 @@ EVIDENCE — Data Confidence 61/100
 Rules:
 
 - **The score is the header.** Data Confidence appears here and in the verdict
-  and decision blocks — nowhere else, and identical in all three.
+  and decision blocks — nowhere else. The decision record is where the value is
+  validated (`SKILL.md` §9); the other two are read off it.
 - **Use the seven canonical statuses** from `references/data-quality.md` §2 and
   no others: `VERIFIED`, `CROSS-CHECKED`, `SINGLE SOURCE`, `CONFLICT`, `STALE`,
   `INCOMPLETE`, `DATA NOT AVAILABLE`. Not `MATCH`, not `OK`, not `PARTIAL` —
@@ -212,9 +217,12 @@ Name them rather than letting them pass as equally solid:
 - Any figure taken from a single press release with no filing behind it yet
 - Extracted figures from a First North release where the PDF was not read
 
-These go in the `SINGLE SOURCE` group of the Evidence block, and they count
-towards the single-source figure in the tally. That is not a weakness in the
-analysis; it is the analysis being honest about its own basis.
+These go in the `SINGLE SOURCE` group of the Evidence block (underlying
+material), and they count towards the single-source figure in the tally. Where
+such a figure is material to the recommendation, its limitation reaches the
+reader as a plain-language clause in the answer per SKILL.md §7 rather than as
+a notation. That is not a weakness in the analysis; it is the analysis being
+honest about its own basis.
 
 ## The standard this sets
 

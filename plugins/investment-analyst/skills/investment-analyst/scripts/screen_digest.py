@@ -6,6 +6,24 @@ This is deliberately NOT the full screen (screen.py / the `screen` skill). No
 ten-year price cache, no DCF, no scorecard. It runs unattended as a scheduled
 cloud job once a day, so the overriding design constraints are:
 
+SUPERSEDED AS A CLI, v3.0.0. No command or scheduled prompt in this plugin
+invokes this script any more - `scheduled/daily-screen-prompt.md` and the
+`/screen` command both run screen_value.py instead, which reuses the same
+universe/liquidity/corporate-action layer this module used to own outright
+(now market_universe.py, see that module's docstring) plus a deeper,
+survivors-only value+margin filter this module never had. This file is NOT
+deleted: it is still exercised end to end by tests/test_screen_digest.py
+(90 tests), which remain the only coverage of this module's OWN remaining
+logic - regulatory-news checking (mfn_news/venues_se), short-interest
+signals (short_se), worst-decile candidate selection, and this module's
+particular report shape (TECHNICAL / FELL ON INFORMATION / FELL ON FLOWS /
+NOT CLASSIFIED). None of that is shared with screen_value.py, which uses a
+value+margin filter instead of a worst-decile one and has no regulatory-news
+or short-interest stage at all. Kept for the record, and because deleting a
+90-test-covered module in the same release as the extraction it depends on
+is exactly the kind of unforced move this toolkit's own house style warns
+against ("refuse rather than guess").
+
   * NEVER HANG. Every sibling call is wrapped so a dead endpoint degrades one
     axis of one candidate to "not checked", never the whole run.
   * FIT A TIME BUDGET. An overall wall-clock budget (--budget, default
@@ -97,20 +115,34 @@ THE PIPELINE
 
   5. CORPORATE ACTIONS.  Every decile candidate is cross-checked against
      corporate_actions.py for a split, rights issue, spin-off, dividend or
-     other per-share-breaking action inside the return window.
-     nordic_shares' price series is UNADJUSTED for these, so an unadjusted
-     "-40%" can be a 10:1 split - or an ordinary ex-dividend drop in AGM
-     season - wearing a crash costume. A hit routes the name to the
-     TECHNICAL bucket, labelled as a technical move, never into candidates.
-     Splits are checked on their EFFECTIVE date (corporate_actions.
-     split_adjustment_factor), not the announcement date - a split announced
-     months before the window but effective inside it used to be invisible
-     to an announcement-date-only check. Where more than one Nasdaq CNS
-     company matches the name and the top match is not an exact one, the
-     check REFUSES rather than silently take the highest-ranked row (see
-     `not checked` below) - the alternative already misattributed a 10:1
-     split to "no corporate action" often enough to pass a real crash
-     through as a candidate.
+     other per-share-affecting action inside the return window.
+     CORRECTED IN v3.0.0: nordic_shares' price series is back-adjusted for
+     splits - measured, not assumed, from four dated confirmed splits in
+     both directions showing zero price discontinuity at the effective
+     date (see corporate_actions.py's own "THE ANSWER" section and its
+     price_check() diagnostic). A confirmed split is therefore no longer,
+     by itself, a reason a fall is a technical artefact. Dividends remain
+     unverified either way and are treated as unadjusted (see
+     nordic_shares.py), and rights issues/spin-offs/directed issues are
+     likewise not confirmed adjusted - so an unadjusted "-40%" can still be
+     an ordinary ex-dividend drop in AGM season, or a rights issue, wearing
+     a crash costume, even though it can no longer be an unadjusted split.
+     A hit on any of these still routes the name to the TECHNICAL bucket,
+     labelled as a technical move, never into candidates - this check does
+     not itself distinguish "confirmed harmless" from "genuinely
+     distorting" within that one flag; a reader who needs that distinction
+     reads each event's own `type` in the output. Splits are checked on
+     their EFFECTIVE date (corporate_actions.split_adjustment_factor's own
+     `confirmed_splits` dates - never its numeric `factor`, which is scoped
+     to per-share FUNDAMENTALS and must never be applied to a price or a
+     price ratio), not the announcement date - a split announced months
+     before the window but effective inside it used to be invisible to an
+     announcement-date-only check. Where more than one Nasdaq CNS company
+     matches the name and the top match is not an exact one, the check
+     REFUSES rather than silently take the highest-ranked row (see `not
+     checked` below) - the alternative already misattributed a corporate
+     action to the wrong company often enough to pass a real crash through
+     as a candidate.
 
      This runs pre-open (see PRE-OPEN SCHEDULING below), so "inside the
      return window" is itself split at the candidate's own last completed
@@ -211,10 +243,8 @@ import argparse
 import datetime
 import json
 import os
-import re
 import statistics
 import sys
-import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -254,26 +284,137 @@ try:
 except Exception:                                        # pragma: no cover
     mfn_news = None
 
-DEFAULT_LIQUIDITY_FLOOR_SEK = 2_000_000.0
+# market_universe.py - the shared Swedish-market universe/liquidity layer,
+# EXTRACTED from this module in v3.0.0 (see that module's own docstring for
+# the full history). screen_value.py (the live `/screen` market-discovery
+# path) depends on the SAME layer, so it now lives in one place instead of
+# being aliased out of this script's globals with a second, divergence-prone
+# reimplementation on the other end - see this module's own module
+# docstring, "RETIRED AS A CLI" section, for what that means for THIS file.
+try:
+    import market_universe
+except Exception:                                        # pragma: no cover
+    market_universe = None
+
+# Universe/liquidity constants, the Budget/throttle idiom, and the
+# fetch/grouping/turnover/corporate-action functions below are now single-
+# sourced in market_universe.py - aliased here so every existing call site
+# in this file (and every direct sd.<name> reference in
+# tests/test_screen_digest.py) keeps working unchanged. See
+# check_corporate_actions and _instrument_turnover_sek further down for the
+# two cases that need a thin syncing wrapper rather than a bare alias.
+if market_universe is not None:
+    DEFAULT_LIQUIDITY_FLOOR_SEK = market_universe.DEFAULT_LIQUIDITY_FLOOR_SEK
+    WINDOW_DAYS = market_universe.WINDOW_DAYS
+    NASDAQ_MICS = market_universe.NASDAQ_MICS
+    OTHER_MICS = market_universe.OTHER_MICS
+    ALL_MICS = market_universe.ALL_MICS
+    REGULATED_MICS = market_universe.REGULATED_MICS
+    VENUE_LABEL = market_universe.VENUE_LABEL
+    Budget = market_universe.Budget
+    NASDAQ_THROTTLE = market_universe.NASDAQ_THROTTLE
+    _num = market_universe._num
+    fetch_nasdaq_snapshot = market_universe.fetch_nasdaq_snapshot
+    fetch_firds = market_universe.fetch_firds
+    combine_universe = market_universe.combine_universe
+    group_by_issuer = market_universe.group_by_issuer
+    percentile_rank = market_universe.percentile_rank
+    compute_returns = market_universe.compute_returns
+    select_primary_instrument = market_universe.select_primary_instrument
+    compute_issuer_turnover = market_universe.compute_issuer_turnover
+    apply_liquidity_floor = market_universe.apply_liquidity_floor
+    _strip_class_suffix = market_universe._strip_class_suffix
+    data_confidence = market_universe.data_confidence
+else:                                                    # pragma: no cover
+    # No meaningful degraded mode without it - every stage from the Nasdaq
+    # snapshot onward needs this layer. Fall back to the same minimal
+    # "not importable" values market_universe.py itself would report for a
+    # missing sibling, so a broken market_universe.py degrades this script
+    # the same way a broken nordic_shares.py always has, rather than a
+    # crash on the first NameError.
+    DEFAULT_LIQUIDITY_FLOOR_SEK = 2_000_000.0
+    WINDOW_DAYS = {"1w": 7, "1m": 30, "3m": 90}
+    NASDAQ_MICS = ("XSTO", "SSME")
+    OTHER_MICS = ("XSAT", "XNGM", "NSME")
+    ALL_MICS = NASDAQ_MICS + OTHER_MICS
+    REGULATED_MICS = {"XSTO", "XNGM"}
+    VENUE_LABEL = {}
+
+    class Budget(object):
+        def __init__(self, seconds):
+            self.seconds = seconds
+            self.start = time.monotonic()
+            self.deadline = self.start + seconds if seconds and seconds > 0 else None
+
+        def exceeded(self):
+            return self.deadline is not None and time.monotonic() >= self.deadline
+
+        def elapsed(self):
+            return time.monotonic() - self.start
+
+        def remaining(self):
+            if self.deadline is None:
+                return None
+            return max(0.0, self.deadline - time.monotonic())
+
+    class _NoThrottle(object):
+        def wait(self):
+            pass
+
+    NASDAQ_THROTTLE = _NoThrottle()
+
+    def _num(raw):
+        return None
+
+    def fetch_nasdaq_snapshot(market="STO"):
+        return None, None, "market_universe.py not importable"
+
+    def fetch_firds(mics):
+        return {}, {m: "market_universe.py not importable" for m in mics}
+
+    def combine_universe(*a, **k):
+        return []
+
+    def group_by_issuer(rows):
+        return []
+
+    def percentile_rank(closes, value):
+        return None
+
+    def compute_returns(bars):
+        return None
+
+    def select_primary_instrument(issuer, returns_by_obid):
+        row = issuer["primary"]
+        ret = {"status": "not checked", "reason": "market_universe.py not importable"}
+        issuer["primary"] = row
+        issuer["primary_returns"] = ret
+        issuer["primary_turnover_sek"] = None
+        return row, ret, None
+
+    def compute_issuer_turnover(issuer):
+        issuer["turnover_status"] = "no_source"
+        issuer["turnover_sek"] = None
+        issuer["turnover_error"] = "market_universe.py not importable"
+
+    def apply_liquidity_floor(issuers, floor, include_illiquid):
+        for iss in issuers:
+            iss["liquidity_status"] = "not checked - market_universe.py not importable"
+        return list(issuers), {"no_price_source": 0, "below_floor": 0, "did_not_trade": 0}
+
+    def _strip_class_suffix(name):
+        return (name or "").strip()
+
+    def data_confidence(mic):
+        regulated = mic in REGULATED_MICS
+        return {"mic": mic, "regulated_market": regulated, "esef_applies": regulated,
+                "label": "unknown - market_universe.py not importable"}
+
 DEFAULT_BUDGET_SECONDS = 240.0
 HISTORY_LOOKBACK_DAYS = 130          # covers the 3m window plus a buffer
-WINDOW_DAYS = {"1w": 7, "1m": 30, "3m": 90}
 MIN_DECILE_POOL = 10                 # below this, "worst decile" just means "everyone"
 STALE_SHORT_INTEREST_DAYS = 14
 PREMARKET_BLANK_TURNOVER_FRACTION = 0.5   # refuse to publish above this
-
-NASDAQ_MICS = ("XSTO", "SSME")        # covered by nordic_shares (price/turnover)
-OTHER_MICS = ("XSAT", "XNGM", "NSME")  # identity-only, via venues_se/FIRDS
-ALL_MICS = NASDAQ_MICS + OTHER_MICS
-
-REGULATED_MICS = {"XSTO", "XNGM"}     # ESEF applies; SSME/XSAT/NSME are MTFs
-VENUE_LABEL = {
-    "XSTO": "Nasdaq Stockholm (main market)",
-    "SSME": "Nasdaq First North Growth Market Sweden",
-    "XSAT": "Spotlight Stock Market",
-    "XNGM": "NGM Equity",
-    "NSME": "Nordic SME",
-}
 
 # .format() on the two placeholders only, via replace() rather than str.format
 # on the whole docstring - the docstring's prose is full of literal braces-free
@@ -285,40 +426,9 @@ __doc__ = (__doc__.replace("{budget}", str(int(DEFAULT_BUDGET_SECONDS)))
 
 
 # ---------------------------------------------------------------------------
-# time budget
+# time budget, throttle, number parsing, Nasdaq snapshot, FIRDS: all moved to
+# market_universe.py in v3.0.0 (aliased above) - see that module's docstring.
 # ---------------------------------------------------------------------------
-
-class Budget(object):
-    """A wall-clock ceiling for the whole run.
-
-    Nothing here can forcibly interrupt a blocking network call already in
-    flight - each sibling's own per-call socket timeout (45-90s, see their
-    own `urlopen(..., timeout=...)`) is what bounds that. What this DOES
-    guarantee is that no NEW work is submitted once the budget is spent, and
-    - via `remaining()` - that COLLECTING already-submitted work is itself
-    bounded, so the run's tail latency is bounded by one round of in-flight
-    requests, never open-ended.
-    """
-
-    def __init__(self, seconds):
-        self.seconds = seconds
-        self.start = time.monotonic()
-        self.deadline = self.start + seconds if seconds and seconds > 0 else None
-
-    def exceeded(self):
-        return self.deadline is not None and time.monotonic() >= self.deadline
-
-    def elapsed(self):
-        return time.monotonic() - self.start
-
-    def remaining(self):
-        """Seconds left before the deadline, or None if this budget has no
-        ceiling at all (matches as_completed's own `timeout=None` = wait
-        forever convention)."""
-        if self.deadline is None:
-            return None
-        return max(0.0, self.deadline - time.monotonic())
-
 
 def today():
     """A seam for tests: patched to a fixed date so as-of comparisons are
@@ -327,119 +437,8 @@ def today():
 
 
 # ---------------------------------------------------------------------------
-# a light, shared throttle against api.nasdaq.com
+# stage 1: universe (XNGM/NSME turnover only - the rest is in market_universe)
 # ---------------------------------------------------------------------------
-
-class RateLimiter(object):
-    """A minimum-interval throttle shared across worker threads.
-
-    api.nasdaq.com publishes no documented numeric rate limit, but this
-    toolkit's own data-sources.md commits every script to respecting
-    published rate limits and never hammering a host - ten concurrent
-    workers with zero pacing between requests is the opposite of that. This
-    is deliberately not a full token bucket: a job that runs once a day
-    against a handful of hundred names needs one lock-guarded "not before"
-    timestamp, not a scheduler.
-    """
-
-    def __init__(self, min_interval=0.15):
-        self.min_interval = min_interval
-        self._lock = threading.Lock()
-        self._next_ok = 0.0
-
-    def wait(self):
-        with self._lock:
-            now = time.monotonic()
-            delay = self._next_ok - now
-            if delay > 0:
-                time.sleep(delay)
-                now = time.monotonic()
-            self._next_ok = now + self.min_interval
-
-
-NASDAQ_THROTTLE = RateLimiter()
-
-
-# ---------------------------------------------------------------------------
-# number parsing - reuse mfn_news.to_number, never a second parser
-# ---------------------------------------------------------------------------
-
-def _num(raw):
-    """Parse a raw screener string ("30,054,559", "151,286", "+0.85%") via
-    mfn_news.to_number - the toolkit's ONE Swedish/English number parser.
-    Only the '+' and '%' decoration specific to this endpoint is stripped
-    first; the actual digit-grouping/decimal logic is never reimplemented.
-    """
-    if raw is None or mfn_news is None:
-        return None
-    s = str(raw).strip()
-    if not s:
-        return None
-    if s.startswith("+"):
-        s = s[1:]
-    if s.endswith("%"):
-        s = s[:-1]
-    return mfn_news.to_number(s)
-
-
-# ---------------------------------------------------------------------------
-# stage 1: universe
-# ---------------------------------------------------------------------------
-
-def fetch_nasdaq_snapshot(market="STO"):
-    """One pass over `/screener/shares` per segment, giving BOTH the
-    universe-shaped rows (price, sector, currency, ISIN) AND the
-    turnover/volume/percentageChange fields nordic_shares.universe() itself
-    discards - fetching those separately used to cost twice the requests
-    (4 segments x 2 calls) and join a price snapshot to a turnover snapshot
-    taken seconds apart. Returns (rows, liquidity_by_obid, error_or_None).
-    """
-    if nordic_shares is None:
-        return None, None, "nordic_shares.py not importable"
-    rows, liq = [], {}
-    try:
-        for category, segment in nordic_shares.SEGMENTS:
-            params = {"category": category, "market": market, "tableonly": "false"}
-            if segment:
-                params["segment"] = segment
-            data = nordic_shares.api("/screener/shares", **params)
-            for r in data["instrumentListing"]["rows"]:
-                obid = r.get("orderbookId")
-                if not obid:
-                    continue
-                rows.append({"orderbookId": obid, "symbol": r.get("symbol"),
-                            "name": r.get("fullName"), "isin": r.get("isin"),
-                            "currency": r.get("currency"),
-                            "segment": segment or "FIRST_NORTH",
-                            "sector": r.get("sector"),
-                            "last": _num(r.get("lastSalePrice"))})
-                liq[obid] = {"turnover": _num(r.get("turnover")),
-                            "volume": _num(r.get("volume")),
-                            "percent_change_1d": _num(r.get("percentageChange"))}
-    except (Exception, SystemExit) as exc:
-        return (rows or None), (liq or None), str(exc)
-    return rows, liq, None
-
-
-def fetch_firds(mics):
-    """venues_se.firds_instruments() per MIC - identity for the whole market.
-    Returns (results_by_mic, failed_by_mic); a MIC that fails is reported,
-    not silently dropped from the universe count."""
-    results, failed = {}, {}
-    if venues_se is None:
-        return results, {m: "venues_se.py not importable" for m in mics}
-    for mic in mics:
-        try:
-            r = venues_se.firds_instruments(mic)
-        except (Exception, SystemExit) as exc:
-            failed[mic] = str(exc)
-            continue
-        if r is None:
-            failed[mic] = "ESMA FIRDS unreachable"
-            continue
-        results[mic] = r
-    return results, failed
-
 
 def fetch_other_venue_turnover(mics):
     """XNGM/NSME per-ISIN turnover and last price, via
@@ -472,168 +471,14 @@ def fetch_other_venue_turnover(mics):
     return {isin: info for isin, info in data.items() if isin != "_meta"}, None
 
 
-def _mic_for_nasdaq_segment(segment):
-    return "SSME" if segment == "FIRST_NORTH" else "XSTO"
-
-
-def _blank_row(isin, name, mic):
-    return {"isin": isin, "lei": None, "name": name, "mic": mic, "currency": None,
-            "price": None, "turnover": None, "volume": None, "percent_change_1d": None,
-            "sector": None, "orderbookId": None, "has_price_source": False,
-            "also_on": []}
-
-
-def combine_universe(nasdaq_rows, nasdaq_liquidity, firds_by_mic, mics,
-                     other_venue_turnover=None):
-    """One row per ISIN, identity (LEI/name/mic) from FIRDS where available,
-    price/turnover from Nasdaq where available. Never invents either.
-
-    An ISIN dual-listed across two MICs (Paradox Interactive: XSTO and
-    SSME) used to be silently overwritten by whichever MIC's FIRDS batch
-    happened to be processed last in dict order - which could clobber a
-    regulated-market (ESEF-covered) row with an MTF one, understating the
-    row's own data confidence. On a collision the REGULATED venue (XSTO,
-    XNGM) is always kept as the row of record; the other MIC is recorded in
-    `also_on`, never silently dropped.
-    """
-    combined = {}
-    for mic, result in (firds_by_mic or {}).items():
-        if mic not in mics:
-            continue
-        for inst in result.get("instruments", []):
-            isin = inst["isin"]
-            row = _blank_row(isin, inst["name"], mic)
-            row["lei"] = inst.get("lei") or None
-            existing = combined.get(isin)
-            if existing is None:
-                combined[isin] = row
-                continue
-            regulated_new = mic in REGULATED_MICS
-            regulated_old = existing["mic"] in REGULATED_MICS
-            if regulated_new and not regulated_old:
-                row["also_on"] = existing.get("also_on", []) + [existing["mic"]]
-                combined[isin] = row
-            else:
-                existing.setdefault("also_on", []).append(mic)
-
-    for row in nasdaq_rows or []:
-        mic = _mic_for_nasdaq_segment(row.get("segment"))
-        if mic not in mics:
-            continue
-        isin = row.get("isin")
-        if not isin:
-            continue
-        c = combined.get(isin) or _blank_row(isin, row.get("name"), mic)
-        c["name"] = c["name"] or row.get("name")
-        c["currency"] = row.get("currency") or c["currency"]
-        c["price"] = row.get("last")
-        c["sector"] = row.get("sector") or c["sector"]
-        c["orderbookId"] = row.get("orderbookId")
-        liq = (nasdaq_liquidity or {}).get(row.get("orderbookId"))
-        if liq:
-            c["turnover"] = liq.get("turnover")
-            c["volume"] = liq.get("volume")
-            c["percent_change_1d"] = liq.get("percent_change_1d")
-            c["has_price_source"] = True
-        combined[isin] = c
-
-    for isin, info in (other_venue_turnover or {}).items():
-        c = combined.get(isin)
-        if c is None or c.get("has_price_source"):
-            continue
-        if info.get("turnover") is not None or info.get("last_price") is not None:
-            c["price"] = info.get("last_price") if info.get("last_price") is not None else c["price"]
-            c["currency"] = info.get("currency") or c["currency"]
-            c["other_venue_turnover"] = info.get("turnover")
-
-    return list(combined.values())
-
-
-def group_by_issuer(combined_rows):
-    """Collapse share classes by LEI (spec: 997 ISIN lines are 925 issuers,
-    Investor A/B is one candidate). Falls back to the bare ISIN when FIRDS
-    carried no LEI for a row, matching short_se.group_by_company's and
-    venues_se.group_by_issuer's own convention.
-
-    `primary` here is only PROVISIONAL - the first instrument with an
-    orderbook id, or the first row if none has one. The tradeable line is
-    NOT chosen by turnover at this stage: the Nasdaq screener's intraday
-    `turnover` field is blank for the entire market before the 09:00 open,
-    so picking "the most liquid class" from it here picked the most liquid
-    class of a partial morning. select_primary_instrument() re-picks the
-    real primary once every class's own price history (and therefore its
-    LAST-SESSION turnover) has been fetched - see the pipeline stage order
-    in the module docstring.
-    """
-    groups = {}
-    for r in combined_rows:
-        key = r.get("lei") or ("isin:" + r["isin"])
-        groups.setdefault(key, []).append(r)
-
-    issuers = []
-    for key, rows in groups.items():
-        primary = next((r for r in rows if r.get("orderbookId")), rows[0])
-        name = next((r["name"] for r in rows if r.get("name")), None) or primary.get("name")
-        issuers.append({"key": key, "lei": primary.get("lei"), "name": name,
-                        "isins": [r["isin"] for r in rows], "instruments": rows,
-                        "primary": primary})
-    return issuers
-
-
 # ---------------------------------------------------------------------------
-# stage 2: history and returns
+# stage 2: history and returns. Grouping (combine_universe/group_by_issuer)
+# and the pure return/percentile math (percentile_rank/compute_returns) are
+# in market_universe.py now (aliased above) - fetch_return_for_instrument and
+# fetch_returns_parallel below are THIS script's own 130-day history fetch,
+# deliberately not shared with screen_value.py - see market_universe.py's
+# own module docstring for why.
 # ---------------------------------------------------------------------------
-
-def percentile_rank(closes, value):
-    """Where `value` sits in `closes`, as a 0-100 percentile.
-
-    Strictly LESS THAN, not less-than-or-equal: counting the value against
-    itself meant the single lowest close in a monotonically falling series
-    always scored 100/N (e.g. 1.1 for a 90-bar window) and could never
-    reach 0, even though it IS the minimum of the range.
-    """
-    if not closes:
-        return None
-    return 100.0 * sum(1 for c in closes if c < value) / len(closes)
-
-
-def compute_returns(bars):
-    """1w/1m/3m returns plus the percentile of the last close within the
-    bars actually fetched (NOT a multi-year range - this screen deliberately
-    carries no historical cache). Also carries the LAST COMPLETED SESSION's
-    own close and volume through (`last_volume`) - this is what the
-    liquidity floor is computed from (see B1 in the module docstring): the
-    Nasdaq screener's intraday `turnover` field is blank before the market
-    opens, but a daily bar's own volume is a fact about a session that has
-    already closed. Returns None if there is nothing usable."""
-    usable = [b for b in (bars or []) if b.get("close") is not None]
-    if not usable:
-        return None
-    usable.sort(key=lambda b: b["date"])
-    closes = [b["close"] for b in usable]
-    last_bar = usable[-1]
-    last_close, last_date = last_bar["close"], last_bar["date"]
-
-    out = {"as_of": last_date, "last_close": last_close,
-          "last_volume": last_bar.get("volume"), "windows": {},
-          "percentile_in_fetched_range": percentile_rank(closes, last_close),
-          "bars_fetched": len(usable)}
-    last_d = datetime.date.fromisoformat(last_date)
-    for label, days in WINDOW_DAYS.items():
-        target = (last_d - datetime.timedelta(days=days)).isoformat()
-        ref = None
-        for b in usable:
-            if b["date"] <= target:
-                ref = b
-        if ref is None:
-            out["windows"][label] = {"pct": None, "from_date": None,
-                                     "note": "insufficient history for this window"}
-            continue
-        pct = (last_close / ref["close"] - 1.0) * 100.0 if ref["close"] else None
-        out["windows"][label] = {"pct": pct, "from_date": ref["date"],
-                                 "from_close": ref["close"]}
-    return out
-
 
 def fetch_return_for_instrument(row, as_of_date):
     """Price history for ONE instrument row (not an issuer - every listed
@@ -706,189 +551,37 @@ def fetch_returns_parallel(instruments, as_of_date, budget, max_workers=10):
 
 
 def _instrument_turnover_sek(row, ret):
-    """LAST-COMPLETED-SESSION turnover (close x volume from the daily bar
-    `ret` carries), FX-converted to SEK via nordic_shares._fx_convert_to_sek
-    (dated Riksbank/ECB rates - never a guessed one). Returns
-    (turnover_sek_or_None, error_or_None). NOT the Nasdaq screener's
-    intraday `turnover` field - see B1 in the module docstring."""
-    if not ret or ret.get("status") != "checked":
-        return None, None
-    close, volume = ret.get("last_close"), ret.get("last_volume")
-    if close is None or volume is None:
-        return None, "last bar missing close or volume"
-    raw = close * volume
-    ccy = (row.get("currency") or "SEK").upper()
-    if ccy == "SEK":
-        return raw, None
-    if nordic_shares is None:
-        return None, "nordic_shares.py not importable - cannot FX-convert %s" % ccy
-    try:
-        converted = nordic_shares._fx_convert_to_sek({ccy: raw})
-    except (Exception, SystemExit) as exc:
-        return None, str(exc)
-    if not converted:
-        return None, "no dated FX rate for %s" % ccy
-    return converted["total_sek"], None
-
-
-def select_primary_instrument(issuer, returns_by_obid):
-    """The most-liquid class becomes the tradeable 'primary' line, using
-    each class's own LAST-SESSION turnover (see _instrument_turnover_sek) -
-    never the intraday screener snapshot, which is blank for the whole
-    market before the open and used to hand this decision to whichever
-    class happened to have a nonzero morning print. Attaches
-    `primary_returns` (that class's own compute_returns() result) to the
-    issuer alongside the (possibly re-picked) `primary` row.
+    """Thin delegation to market_universe._instrument_turnover_sek - NOT a
+    bare alias. test_screen_digest.py's InstrumentTurnoverFxConversion tests
+    (and this module's own --selftest) monkeypatch `nordic_shares` as a
+    module-level ATTRIBUTE OF THIS MODULE (`sd.nordic_shares = Fake...`),
+    the convention used everywhere else in this suite. A bare alias
+    (`_instrument_turnover_sek = market_universe._instrument_turnover_sek`)
+    would silently stop honouring that patch: the aliased function's own
+    __globals__ is market_universe's namespace, not this one, so setting
+    this module's `nordic_shares` would no longer be visible to the
+    function body at all. Syncing this module's CURRENT `nordic_shares`
+    into market_universe immediately before delegating keeps the one real
+    implementation in market_universe.py while preserving the exact test
+    seam this suite already relies on. See check_corporate_actions below
+    for the other function that needs the same treatment, and for the
+    production-path note: in a real run both modules import the SAME
+    nordic_shares module object anyway, so this sync is a no-op copy of
+    identical references outside of tests.
     """
-    best_row, best_ret, best_sek = None, None, None
-    for row in issuer["instruments"]:
-        obid = row.get("orderbookId")
-        ret = returns_by_obid.get(obid) if obid else None
-        sek, _err = _instrument_turnover_sek(row, ret) if ret else (None, None)
-        if sek is not None and (best_sek is None or sek > best_sek):
-            best_row, best_ret, best_sek = row, ret, sek
-    if best_row is None:
-        best_row = issuer["primary"]
-        obid = best_row.get("orderbookId")
-        best_ret = (returns_by_obid.get(obid) if obid else None) or {
-            "status": "not checked",
-            "reason": "no orderbook id - no free price-history source exists "
-                      "in this toolkit for this venue"}
-    issuer["primary"] = best_row
-    issuer["primary_returns"] = best_ret
-    issuer["primary_turnover_sek"] = best_sek
-    return best_row, best_ret, best_sek
+    if market_universe is None:
+        return None, "market_universe.py not importable"
+    market_universe.nordic_shares = nordic_shares
+    return market_universe._instrument_turnover_sek(row, ret)
 
 
-def compute_issuer_turnover(issuer):
-    """Attach turnover_status ("ok" | "unresolved" | "no_source"),
-    turnover_sek and turnover_error to an issuer, from its primary
-    instrument's last completed session - called once per issuer in run(),
-    after select_primary_instrument. apply_liquidity_floor is a pure
-    decision function over exactly these three fields, kept separate so it
-    stays trivially unit-testable.
-
-    An issuer with no Nasdaq orderbook id at all (XSAT always; XNGM/NSME
-    unless the OPTIONAL INTEGRATION POINT is live) falls back to whatever
-    `combine_universe` attached as `other_venue_turnover` - venues_se.
-    ngm_turnover()'s own figure for XNGM/NSME - before being written off as
-    source-less entirely.
-    """
-    has_orderbook = any(r.get("orderbookId") for r in issuer["instruments"])
-    if not has_orderbook:
-        other = issuer["primary"].get("other_venue_turnover")
-        if other is None:
-            issuer["turnover_status"] = "no_source"
-            issuer["turnover_sek"] = None
-            issuer["turnover_error"] = None
-            return
-        ccy = (issuer["primary"].get("currency") or "SEK").upper()
-        if ccy == "SEK":
-            issuer["turnover_status"] = "ok"
-            issuer["turnover_sek"] = other
-            issuer["turnover_error"] = None
-            return
-        if nordic_shares is None:
-            issuer["turnover_status"] = "unresolved"
-            issuer["turnover_sek"] = None
-            issuer["turnover_error"] = "nordic_shares.py not importable - cannot FX-convert %s" % ccy
-            return
-        try:
-            converted = nordic_shares._fx_convert_to_sek({ccy: other})
-        except (Exception, SystemExit) as exc:
-            issuer["turnover_status"] = "unresolved"
-            issuer["turnover_sek"] = None
-            issuer["turnover_error"] = str(exc)
-            return
-        if not converted:
-            issuer["turnover_status"] = "unresolved"
-            issuer["turnover_sek"] = None
-            issuer["turnover_error"] = "no dated FX rate for %s" % ccy
-            return
-        issuer["turnover_status"] = "ok"
-        issuer["turnover_sek"] = converted["total_sek"]
-        issuer["turnover_error"] = None
-        return
-
-    ret = issuer.get("primary_returns") or {}
-    sek, err = _instrument_turnover_sek(issuer["primary"], ret)
-    if sek is None:
-        issuer["turnover_status"] = "unresolved"
-        issuer["turnover_sek"] = None
-        issuer["turnover_error"] = err or ret.get("reason") or "price history unavailable"
-    else:
-        issuer["turnover_status"] = "ok"
-        issuer["turnover_sek"] = sek
-        issuer["turnover_error"] = None
-
-
-# ---------------------------------------------------------------------------
-# stage 3: liquidity floor
-# ---------------------------------------------------------------------------
-
-def apply_liquidity_floor(issuers, floor, include_illiquid):
-    """Cuts on the LAST-SESSION, SEK-equivalent turnover computed by
-    compute_issuer_turnover - never the intraday screener snapshot (see B1:
-    that field is blank for the entire market before the open and used to
-    cut the whole universe as illiquid on a pre-market run).
-
-    Expects each issuer to already carry turnover_status/turnover_sek/
-    turnover_error (compute_issuer_turnover). Three cut reasons, each
-    counted UNCONDITIONALLY (once per issuer that meets it, whether or not
-    --include-illiquid then keeps it in `survivors` too - a cut issuer kept
-    by that flag must still count once against the reason it was cut for,
-    not zero times and not twice):
-      no_price_source  - no venue in this toolkit has a free feed at all.
-      did_not_trade    - a feed exists, the last session is known, and its
-                         volume was zero. Distinct from no_price_source:
-                         Nokia/Modelon/Qlucore-style names that simply had
-                         a quiet day used to be told this toolkit has no
-                         feed for their venue at all, which is false.
-      below_floor      - turnover is known and positive, but under the floor.
-    An issuer whose turnover could not be determined at all (price history
-    not yet checked, or no dated FX rate for its currency) is NEITHER cut
-    NOR confirmed liquid - there is no evidence either way, so it passes
-    through uncut and is reported separately (see the "returns: not
-    checked" cut-stage counter in run()), never silently treated as having
-    cleared the floor.
-    """
-    survivors = []
-    cuts = {"no_price_source": 0, "below_floor": 0, "did_not_trade": 0}
-    for iss in issuers:
-        status = iss.get("turnover_status")
-        turnover = iss.get("turnover_sek")
-
-        if status == "no_source":
-            iss["liquidity_status"] = "not checked - no free turnover source for this venue"
-            cuts["no_price_source"] += 1
-            if include_illiquid:
-                survivors.append(iss)
-            continue
-
-        if status != "ok":
-            iss["liquidity_status"] = "not checked - %s" % (
-                iss.get("turnover_error") or "price history unavailable")
-            survivors.append(iss)
-            continue
-
-        if turnover is None or turnover <= 0:
-            iss["liquidity_status"] = "did not trade in the last completed session"
-            cuts["did_not_trade"] += 1
-            if include_illiquid:
-                survivors.append(iss)
-            continue
-
-        if turnover < floor:
-            iss["liquidity_status"] = ("below floor (%s < %s SEK-equiv)"
-                                       % ("{:,.0f}".format(turnover), "{:,.0f}".format(floor)))
-            cuts["below_floor"] += 1
-            if include_illiquid:
-                survivors.append(iss)
-            continue
-
-        iss["liquidity_status"] = "checked"
-        survivors.append(iss)
-    return survivors, cuts
+# select_primary_instrument, compute_issuer_turnover and apply_liquidity_
+# floor need no such wrapper - see market_universe.py's docstring: none of
+# the tests that exercise them directly also monkeypatch a sibling module
+# on THIS module while doing so (the only sibling-dependent path either of
+# them can reach, non-SEK FX conversion, is only ever exercised through
+# _instrument_turnover_sek's own direct tests above). Plain aliases for
+# them are set at the top of this file, alongside the rest.
 
 
 # ---------------------------------------------------------------------------
@@ -945,158 +638,39 @@ def select_worst_decile(survivors, window):
 
 
 # ---------------------------------------------------------------------------
-# name cleanup shared by both deep-check sources
+# name cleanup and stage 5 (corporate actions): moved to market_universe.py
+# in v3.0.0 (_strip_class_suffix is aliased at the top of this file).
+# check_corporate_actions needs a thin syncing wrapper, not a bare alias -
+# see its docstring below (same reasoning as _instrument_turnover_sek above).
 # ---------------------------------------------------------------------------
-
-_CLASS_SUFFIX_RE = re.compile(r"[,]?\s*(ser\.?|serie|class)\s*[A-Z]\d?\s*$", re.I)
-
-
-def _strip_class_suffix(name):
-    """Strip an exchange's class-suffixed form ("Atlas Copco AB ser. A",
-    "Volvo, AB ser. B") down to the bare company name before resolving it
-    against Nasdaq CNS or MFN. 236 of 754 XSTO+SSME lines carry a '.' in
-    this form and MFN returns HTTP 500 for them outright - and even where a
-    source degrades gracefully instead of erroring, a class-suffixed name is
-    simply less likely to resolve to the right (or any) company."""
-    return _CLASS_SUFFIX_RE.sub("", name or "").strip()
-
-
-# ---------------------------------------------------------------------------
-# stage 5: corporate actions
-# ---------------------------------------------------------------------------
-
-_DIV_AMOUNT_RE = re.compile(
-    r"(?:SEK|kr|kronor)\s*([\d]+[.,]\d+|\d+)(?:\s*(?:per\s+share|per\s+aktie))?|"
-    r"([\d]+[.,]\d+|\d+)\s*(?:SEK|kr|kronor)\s*per\s+(?:share|aktie)", re.I)
-
-
-def _extract_dividend_per_share(title):
-    """Best-effort per-share dividend amount out of a headline, e.g.
-    "SEK 5.20 per share" or "utdelning om 2,50 kr per aktie". None if no
-    such figure is present - this is a headline scrape, not a parsed
-    disclosure, and is only ever used to STATE a yield alongside a
-    dividend-routed technical move, never to compute anything load-bearing.
-    """
-    if not title or mfn_news is None:
-        return None
-    m = _DIV_AMOUNT_RE.search(title)
-    if not m:
-        return None
-    raw = m.group(1) or m.group(2)
-    return mfn_news.to_number(raw.replace(",", ".")) if raw else None
-
 
 def check_corporate_actions(name, date_from, last_close_date, date_to, price=None):
-    """Was there a split/rights issue/spin-off/dividend/other per-share-
-    breaking action inside [date_from, date_to]? A hit means the return
-    computed against nordic_shares' UNADJUSTED price series is a technical
-    artefact, not a real fall - see corporate_actions.py's own module
-    docstring.
+    """Thin delegation to market_universe.check_corporate_actions.
 
-    The window is split in two against `last_close_date` (the same date the
-    candidate's return was measured to - it may fall on the same day as
-    `date_to`, or earlier), for the same reason check_regulatory_news splits
-    its own window: an ex-dividend date or a split EFFECTIVE this morning,
-    before the open, is not an explanation of a fall measured to yesterday's
-    close - the fall predates the action. Only actions on or before
-    `last_close_date` can explain the fall (`has_breaking_action`,
-    `events`); anything strictly after it is new and not yet priced in, and
-    is reported separately under `since_last_close` so it is never silently
-    read as having caused a fall it postdates. One fetch across the WHOLE
-    [date_from, date_to] range is partitioned locally into the two windows
-    rather than fetching twice.
-
-    Refuses (returns `not checked`, naming the candidates seen) rather than
-    silently take the top-ranked Nasdaq CNS company when MORE THAN ONE
-    distinct company matches `name` and the top match is not an EXACT one -
-    corporate_actions.resolve_company's own free-text ranking has, on live
-    data, put an unrelated company ahead of the one actually being asked
-    about; taking hits[0] unconditionally attached that company's actions
-    (or lack of them) to the wrong candidate.
-
-    Dividends are included on purpose (BREAKS_PER_SHARE itself does not
-    carry DIVIDEND - nordic_shares' price series is unadjusted for them, and
-    Swedish AGM season clusters ex-dates tightly enough that an April 1m
-    decile is otherwise dominated by ordinary ex-dividend drops wearing a
-    crash costume); where a per-share amount can be scraped from the
-    headline and `price` is known, the implied yield is stated alongside it.
-
-    Splits are checked TWICE on purpose: once via corporate_actions_between
-    (announcement date, catches everything else BREAKS_PER_SHARE covers),
-    and once via corporate_actions.split_adjustment_factor, which parses the
-    exchange notice's own EFFECTIVE date - a split announced before the
-    window but effective inside it is invisible to an announcement-date-only
-    check and split_adjustment_factor is the tool built to answer that.
+    test_screen_digest.py (and this module's own --selftest) monkeypatch
+    `corporate_actions` and `mfn_news` as module-level ATTRIBUTES OF THIS
+    MODULE (`sd.corporate_actions = FakeCA`), the convention used throughout
+    this suite. A bare alias to market_universe's function would silently
+    stop honouring that patch, for the same reason explained in
+    _instrument_turnover_sek's docstring above: the function's own
+    __globals__ would be market_universe's namespace, not this one. Syncing
+    this module's CURRENT corporate_actions/mfn_news into market_universe
+    immediately before delegating keeps the one real implementation in
+    market_universe.py (see its own check_corporate_actions docstring for
+    the full behaviour, including the v3.0.0 correction on which corporate
+    actions actually distort the price series) while preserving the exact
+    test seam this suite relies on. In a real run both modules import the
+    SAME corporate_actions/mfn_news module objects anyway, so this sync is
+    a no-op copy of identical references outside of tests.
     """
-    if corporate_actions is None:
-        return {"status": "not checked", "reason": "corporate_actions.py not importable",
-                "since_last_close": {"status": "not checked",
-                                     "reason": "corporate_actions.py not importable"}}
-    try:
-        hits = corporate_actions.resolve_company(name)
-    except (Exception, SystemExit) as exc:
-        reason = "CNS name resolution failed: %s" % exc
+    if market_universe is None:
+        reason = "market_universe.py not importable"
         return {"status": "not checked", "reason": reason,
                 "since_last_close": {"status": "not checked", "reason": reason}}
-    if not hits:
-        return {"status": "checked", "has_breaking_action": False, "events": [],
-                "note": "no Nasdaq CNS company matched %r; treated as no action "
-                        "found, which is not proof there was none" % name,
-                "since_last_close": {"status": "checked", "count": 0, "events": [],
-                                     "window": [last_close_date, date_to]}}
-
-    distinct = sorted(set(h["company"] for h in hits))
-    try:
-        top_is_exact = (corporate_actions._norm(hits[0]["company"])
-                        == corporate_actions._norm(name))
-    except (Exception, SystemExit):                 # pragma: no cover - defensive
-        top_is_exact = True
-    if len(distinct) > 1 and not top_is_exact:
-        reason = ("ambiguous Nasdaq CNS match for %r - candidates seen: %s"
-                  % (name, "; ".join(distinct[:6])))
-        return {"status": "not checked", "reason": reason,
-                "since_last_close": {"status": "not checked", "reason": reason}}
-    company = hits[0]["company"]
-
-    breaks_price = corporate_actions.BREAKS_PER_SHARE | {"DIVIDEND"}
-    try:
-        rows = corporate_actions.corporate_actions_between(company, date_from, date_to, pages=2)
-    except (Exception, SystemExit) as exc:
-        reason = str(exc)
-        return {"status": "not checked", "reason": reason,
-                "since_last_close": {"status": "not checked", "reason": reason}}
-    breaking = [r for r in rows if r.get("type") in breaks_price]
-
-    try:
-        factor_info = corporate_actions.split_adjustment_factor(company, date_from, date_to)
-    except (Exception, SystemExit) as exc:
-        factor_info = {"confirmed_splits": [], "warnings": [str(exc)]}
-    already = {(r.get("date") or "")[:10] for r in breaking
-              if r.get("type") in ("SPLIT", "REVERSE_SPLIT")}
-    for c in factor_info.get("confirmed_splits") or []:
-        if c.get("date") in already:
-            continue
-        breaking.append({"date": c.get("date"), "type": c.get("kind"),
-                         "title": "%s %s (effective date)" % (c.get("kind"), c.get("terms"))})
-
-    events = []
-    for r in breaking:
-        ev = {"date": r.get("date"), "type": r.get("type"), "title": r.get("title")}
-        if r.get("type") == "DIVIDEND":
-            amt = _extract_dividend_per_share(r.get("title"))
-            if amt is not None:
-                ev["dividend_per_share"] = amt
-                if price:
-                    ev["dividend_yield_pct"] = 100.0 * amt / price
-        events.append(ev)
-
-    explains = [ev for ev in events if (ev.get("date") or "") <= last_close_date]
-    since_close = [ev for ev in events if (ev.get("date") or "") > last_close_date]
-
-    return {"status": "checked", "has_breaking_action": bool(explains),
-            "cns_company": company, "events": explains,
-            "since_last_close": {"status": "checked", "count": len(since_close),
-                                 "events": since_close, "window": [last_close_date, date_to]}}
+    market_universe.corporate_actions = corporate_actions
+    market_universe.mfn_news = mfn_news
+    return market_universe.check_corporate_actions(name, date_from, last_close_date,
+                                                    date_to, price=price)
 
 
 # ---------------------------------------------------------------------------
@@ -1306,16 +880,8 @@ def short_signal(short_data, candidate, as_of_date):
         return {"status": "not checked", "reason": "short-interest lookup failed: %s" % exc}
 
 
-# ---------------------------------------------------------------------------
-# data confidence
-# ---------------------------------------------------------------------------
-
-def data_confidence(mic):
-    regulated = mic in REGULATED_MICS
-    return {"mic": mic, "regulated_market": regulated, "esef_applies": regulated,
-            "label": ("ESEF-covered regulated market" if regulated else
-                      "MTF - no ESEF; any fundamental context here is parsed "
-                      "prose, not machine-verified XBRL")}
+# data_confidence moved to market_universe.py in v3.0.0 (aliased at the top
+# of this file) - pure function, no sibling dependency, no wrapper needed.
 
 
 # ---------------------------------------------------------------------------
@@ -1493,8 +1059,8 @@ def run(args):
          "count": len(candidates), "reason": "bottom decile of NEGATIVE %s returns only"
                                              % args.window},
         {"stage": "technical moves (corporate action in window)", "count": len(technical),
-         "reason": "split/rights issue/spin-off/dividend/etc makes the unadjusted fall a "
-                   "technical artefact"},
+         "reason": "split/rights issue/spin-off/dividend/etc in window may make the fall a "
+                   "technical artefact rather than a real one"},
         {"stage": "regulatory news: not classified", "count": len(not_classified),
          "reason": "the regulatory-news check itself could not be completed - "
                    "NOT evidence of no news"},
@@ -2055,7 +1621,12 @@ def _selftest():
     n += 1
 
     # -- Swedish/English number formats survive the parse --------------------
+    # _num is a plain alias to market_universe._num now (see the top of this
+    # file), so it reads market_universe's OWN mfn_news, not this module's -
+    # both are synced here for the same "mfn_news failed to import" fallback
+    # this block has always guarded against.
     real_mfn2 = mfn_news
+    real_mu_mfn2 = market_universe.mfn_news if market_universe is not None else None
     if real_mfn2 is None:
         import importlib.util
         path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mfn_news.py")
@@ -2063,6 +1634,8 @@ def _selftest():
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         mfn_news = mod
+        if market_universe is not None:
+            market_universe.mfn_news = mod
     try:
         _assert(_num("30,054,559") == 30054559.0, "English comma-thousands turnover must parse")
         _assert(_num("151,286") == 151286.0, "English comma-thousands volume must parse")
@@ -2071,6 +1644,8 @@ def _selftest():
         _assert(_num(None) is None, "a missing value must not raise")
     finally:
         mfn_news = real_mfn2
+        if market_universe is not None:
+            market_universe.mfn_news = real_mu_mfn2
     n += 5
 
     # -- decile selection: sign filter, degenerate-cutoff-is-None, and a

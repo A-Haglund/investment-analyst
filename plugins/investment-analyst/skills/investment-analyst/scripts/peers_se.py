@@ -99,12 +99,22 @@ reference-data TTL because it is the numerator of every multiple; share counts
 and ICB codes are not, and are stamped with the age of the cached copy. A warm
 second run is dominated by the price-history refresh.
 
+EVERY SUPPRESSION ALSO EMITS A REASON CODE
+------------------------------------------
+The three suppressions above were reported only in prose, at the bottom of a
+100-column report, so nothing downstream could record that a row was blanked
+for an unknown reporting currency rather than for missing fundamentals. Each
+now also carries a code from decision_record.REASON_CODES - per issuer row in
+--json, plus a run-level roll-up - alongside prose that is unchanged:
+PEER_CURRENCY_UNKNOWN, PEER_FUNDAMENTALS_STALE, PEER_NET_DEBT_UNTAGGED.
+
 Usage:
     python peers_se.py "Sandvik"
     python peers_se.py "Evolution" --nordic
     python peers_se.py "Addtech" --multiples
     python peers_se.py "Sandvik" --multiples --json
     python peers_se.py "Indutrade" --scan-limit 40 --max-candidates 10
+    python peers_se.py --selftest
 
 Free, no API key. Sources: Nasdaq Nordic reference data; ESEF Inline XBRL
 annual reports via filings.xbrl.org.
@@ -125,6 +135,17 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import esef_fundamentals as ef          # noqa: E402
 import finfact as ff                    # noqa: E402
 import nordic_shares as ns              # noqa: E402
+
+# finmath.py holds the ONE CAGR implementation (a port of the hardened block
+# in derive() below). It is consulted, never required: a missing shared helper
+# must degrade one number, not the run. Caught as (Exception, SystemExit)
+# rather than ImportError because a sibling that fails a precondition in its
+# module body calls sys.exit(), and SystemExit is not an Exception - the exact
+# defect valuation_gate._soft_load carried until v3.0.0.
+try:
+    import finmath                      # noqa: E402
+except (Exception, SystemExit):         # noqa: BLE001
+    finmath = None
 
 from concurrent.futures import ThreadPoolExecutor   # noqa: E402
 
@@ -1047,6 +1068,305 @@ def reporting_currency(pack, period):
     return sorted(found)
 
 
+# ---------------------------------------------------------------------------
+# Shared rules: one CAGR implementation, one staleness threshold
+# ---------------------------------------------------------------------------
+# Two rules in this file were also implemented, separately, elsewhere in the
+# toolkit. Both are now sourced from one place, and both degrade to the
+# pre-v3.0.0 local code rather than crashing when that place cannot be
+# reached:
+#
+#   revenue CAGR   -> finmath.cagr(), a port of the block inside derive()
+#   annual staleness -> valuation_gate.annual_figure_past_life(), which reads
+#                     finfact.FRESHNESS_DAYS["annual_financials"] - the
+#                     constant this file already used, with the comparison no
+#                     longer written twice
+#
+# What is NOT shared, deliberately: valuation_gate.py's eight-check control
+# flow. That module is a HARD gate - on failure it prints the reason instead
+# of a number. This file warns and suppresses individual columns instead,
+# because most Nordic issuers fail at least one of those eight checks and
+# routing the peer table through the hard gate would blank P/E, EV/EBIT and
+# EV/Sales for nearly every row, destroying the comparison the table exists to
+# make. Two modes are correct here; two thresholds were not.
+
+# A span shorter than this is not a growth rate, it is a rounding artefact of
+# two balance-sheet dates that happen to sit in different calendar years.
+MIN_CAGR_YEARS = 0.75
+
+# Mean Gregorian year. Elapsed calendar time, not observation count, is what
+# sets the exponent - see the defect note inside derive().
+DAYS_PER_YEAR = 365.2425
+
+
+def _elapsed_years(frm, to):
+    """Elapsed calendar years between two ISO dates, or None if either is
+    unparseable. Never an observation count."""
+    try:
+        return ((datetime.date.fromisoformat(str(to)[:10])
+                 - datetime.date.fromisoformat(str(frm)[:10])).days / DAYS_PER_YEAR)
+    except (TypeError, ValueError):
+        return None
+
+
+def _cagr_local(v0, v1, frm, to):
+    """The pre-v3.0.0 implementation, kept only as the degradation path.
+
+    Retained verbatim in behaviour rather than deleted: finmath.py is soft, and
+    a peer table that silently loses its growth column because a shared helper
+    is missing is worse than one computing it here.
+    """
+    elapsed = _elapsed_years(frm, to)
+    if not elapsed or elapsed < MIN_CAGR_YEARS:
+        return None
+    return {"cagr": (v1 / v0) ** (1.0 / elapsed) - 1.0,
+            "years": round(elapsed, 1)}
+
+
+def _normalise_cagr(res, frm, to):
+    """A finmath.cagr() return value in this file's terms, or None.
+
+    Validated rather than trusted: a rate must be a finite float and the span
+    must clear MIN_CAGR_YEARS. Anything unrecognised returns None and the local
+    port runs, which is the same rule as everywhere else here - refuse rather
+    than print a number whose provenance is a guess.
+    """
+    rate = years = None
+    # finmath.cagr_between()/cagr() return a CagrResult OBJECT (attributes
+    # .value/.years/.reason), not a mapping. This branch is checked first
+    # because the object is falsy when the computation was REFUSED
+    # (CagrResult.__bool__ is value is not None), and a refusal must fall
+    # through to the local port rather than being read as a rate of 0.
+    if hasattr(res, "value") and not isinstance(res, (dict, tuple, list)):
+        rate = getattr(res, "value", None)
+        years = getattr(res, "years", None)
+    elif isinstance(res, dict):
+        for k in ("cagr", "rate", "value"):
+            if res.get(k) is not None:
+                rate = res[k]
+                break
+        for k in ("years", "cagr_years", "elapsed_years", "span_years"):
+            if res.get(k) is not None:
+                years = res[k]
+                break
+    elif isinstance(res, (int, float)) and not isinstance(res, bool):
+        rate = res
+    elif isinstance(res, (tuple, list)) and res:
+        rate = res[0]
+        if len(res) > 1:
+            years = res[1]
+    if rate is None:
+        return None
+    try:
+        rate = float(rate)
+    except (TypeError, ValueError):
+        return None
+    if rate != rate or rate in (float("inf"), float("-inf")):
+        return None
+    if years is None:
+        years = _elapsed_years(frm, to)
+    try:
+        years = round(float(years), 1)
+    except (TypeError, ValueError):
+        return None
+    if years < MIN_CAGR_YEARS:
+        return None
+    return {"cagr": rate, "years": years}
+
+
+def _cagr_shared(v0, v1, frm, to):
+    """finmath.cagr(), or None when it cannot be reached or understood.
+
+    finmath.cagr_between(v0, v1, period0, period1, currency0=None,
+    currency1=None, min_years=...) -> CagrResult is the landed signature and
+    is tried first; the remaining shapes are kept as fallbacks. The RESULT is
+    validated before it is believed. A signature mismatch, a shape this file does not
+    recognise, or any raise falls back to _cagr_local() - the one thing that
+    must never happen is printing whatever came back on the assumption that it
+    was a growth rate.
+    """
+    if finmath is None:
+        return None
+    between = getattr(finmath, "cagr_between", None)
+    fn = getattr(finmath, "cagr", None)
+    if between is None and fn is None:
+        return None
+    # cagr_between() is the exact match for this call site: two endpoint
+    # values and two periods, which is what derive() has after it has picked
+    # the base itself. MIN_CAGR_YEARS is passed explicitly so THIS file stays
+    # authoritative on the minimum span rather than inheriting finmath's
+    # default. The series and positional shapes are kept as fallbacks in case
+    # only one of the two entry points is present.
+    attempts = []
+    if between is not None:
+        attempts.append(lambda: between(v0, v1, frm, to,
+                                        min_years=MIN_CAGR_YEARS))
+        attempts.append(lambda: between(v0, v1, frm, to))
+    if fn is not None:
+        attempts.append(lambda: fn({frm: v0, to: v1},
+                                   min_years=MIN_CAGR_YEARS))
+        attempts.append(lambda: fn({frm: v0, to: v1}))
+    attempts = tuple(attempts)
+    for call in attempts:
+        try:
+            res = call()
+        except (TypeError, ValueError, KeyError, AttributeError,
+                IndexError, ZeroDivisionError):
+            continue
+        except (Exception, SystemExit):     # noqa: BLE001
+            return None
+        norm = _normalise_cagr(res, frm, to)
+        if norm is not None:
+            return norm
+    return None
+
+
+def revenue_cagr(v0, v1, frm, to):
+    """{"cagr", "years"} for one endpoint pair, or None.
+
+    Shared implementation first, local port second. The CALLER still owns which
+    two periods these are and which were dropped - that part is a units diff,
+    not CAGR arithmetic, and its exact shape is what the text report unpacks.
+    """
+    return _cagr_shared(v0, v1, frm, to) or _cagr_local(v0, v1, frm, to)
+
+
+_VG = {"loaded": False, "mod": None}
+
+
+def _valuation_gate():
+    """valuation_gate.py on first use, or None.
+
+    Loaded LAZILY, not at module scope: valuation_gate.py soft-loads six
+    siblings of its own (corporate_actions.py and ttm_engine.py are around
+    100KB each), and paying that at `import peers_se` would tax every caller -
+    including the test suite, which imports this file for its issuer resolver
+    alone - for a helper only the staleness line needs.
+    """
+    if not _VG["loaded"]:
+        _VG["loaded"] = True
+        try:
+            import valuation_gate as _vg
+            _VG["mod"] = _vg
+        except (Exception, SystemExit):     # noqa: BLE001
+            _VG["mod"] = None
+    return _VG["mod"]
+
+
+def annual_fundamentals_stale(fy_end, as_of=None):
+    """(stale, age_days, limit) for a filer's latest ESEF ANNUAL figure.
+
+    Delegates to valuation_gate.annual_figure_past_life() so the threshold and
+    the comparison have one home across both files. The inline fallback below
+    is the pre-v3.0.0 code and reads the same finfact.FRESHNESS_DAYS entry, so
+    the two paths can disagree about nothing except whether valuation_gate.py
+    could be imported at all.
+
+    stale is None - never False - when the date is unparseable: an undated
+    figure does not get to claim freshness.
+    """
+    vg = _valuation_gate()
+    if vg is not None and hasattr(vg, "annual_figure_past_life"):
+        try:
+            return vg.annual_figure_past_life(fy_end, as_of)
+        except (Exception, SystemExit):     # noqa: BLE001
+            pass
+    limit = ff.FRESHNESS_DAYS.get("annual_financials", 460)
+    try:
+        d = datetime.date.fromisoformat(str(fy_end)[:10])
+    except (TypeError, ValueError):
+        return None, None, limit
+    age = ((as_of or datetime.date.today()) - d).days
+    return age > limit, age, limit
+
+
+# ---------------------------------------------------------------------------
+# Reason codes for this file's three suppressions
+# ---------------------------------------------------------------------------
+# This file has always been explicit about WHY a number was withheld - and
+# only in prose, at the bottom of a 100-column text report. Nothing
+# downstream could record that Betsson's row was suppressed for an unknown
+# reporting currency rather than for missing fundamentals, so a later decision
+# could not say what it had been denied. The same three suppressions now also
+# emit a code from decision_record.REASON_CODES:
+#
+#   unknown reporting or quote currency  -> PEER_CURRENCY_UNKNOWN     (BLOCK)
+#   latest ESEF annual past its life     -> PEER_FUNDAMENTALS_STALE   (WARN)
+#   net debt not derivable / caveated    -> PEER_NET_DEBT_UNTAGGED    (BLOCK/WARN)
+#
+# The vocabulary is closed: decision_record.validate() refuses a record
+# carrying a code that is not in its dict, so nothing may be added here that
+# is not added there first.
+#
+# NOT coded, deliberately: the "reports in X, quoted in Y and no FX rate
+# available" suppression. Both currencies are KNOWN in that case, so
+# PEER_CURRENCY_UNKNOWN would misreport it, and REASON_CODES has no entry for
+# an unavailable ECB fixing. It keeps its prose until one exists. Same for "no
+# ESEF fundamentals or no market cap", which is an absence of data rather than
+# a suppression of a number that could otherwise have been formed.
+PEER_REASON_CODES = ("PEER_CURRENCY_UNKNOWN", "PEER_FUNDAMENTALS_STALE",
+                     "PEER_NET_DEBT_UNTAGGED")
+
+
+def _short(detail, limit=180):
+    """Prose cut to its first sentence, for a reason code's detail field.
+
+    net_debt_note runs to 250 characters of explanation aimed at a reader of
+    the text report; a code's detail is read next to a dozen others inside a
+    stored record. The full note stays in the row beside it.
+    """
+    text = " ".join(str(detail or "").split())
+    head = text.split(". ")[0].rstrip(".")
+    if not head:
+        head = text
+    if len(head) > limit:
+        head = head[:limit - 3].rstrip() + "..."
+    return head
+
+
+def _code(code, severity, detail):
+    return {"code": code, "severity": severity, "detail": _short(detail)}
+
+
+def net_debt_note_is_caveat(note):
+    """Is this net_debt_note a caveat on a COMPUTED net debt, not a routine one?
+
+    The text report's own test, lifted into a function so the WARN-severity
+    reason code and the "NET DEBT COMPUTED BUT WITH A CAVEAT" section of the
+    report cannot drift apart - they were the same condition written twice.
+    """
+    return bool(note) and not note.startswith(("leases included",
+                                               "no separately tagged"))
+
+
+def issuer_reason_codes(entry, m=None, as_of=None):
+    """Every reason code that applies to ONE issuer row.
+
+    Per row, not per run: a decision about one company must be able to pick up
+    exactly the codes that applied to IT. The run-level roll-up in the JSON
+    output is built from these, never instead of them.
+
+    `m` is that issuer's multiples() result, which carries the currency and
+    net-debt codes because those decisions are made there. The staleness code
+    is derived here from the fundamentals, so it is still reported on a run
+    without --multiples.
+    """
+    codes = []
+    fin = entry.get("fin") or {}
+    fy_end = fin.get("fy_end")
+    if fy_end:
+        stale, age, limit = annual_fundamentals_stale(fy_end, as_of)
+        if stale:
+            codes.append(_code(
+                "PEER_FUNDAMENTALS_STALE", "WARN",
+                "latest ESEF annual ends %s, %d days ago, past the %d-day life "
+                "of an annual figure; every multiple is today's price over "
+                "stale earnings" % (fy_end, age, limit)))
+    for c in (m or {}).get("reason_codes") or []:
+        codes.append(c)
+    return codes
+
+
 def derive(pack):
     """Turn merged ESEF facts into the comparable ratios the score needs.
 
@@ -1112,6 +1432,13 @@ def derive(pack):
     #       growing around +16% a year.
     # Elapsed calendar time now sets the exponent, and any period whose unit
     # differs from the latest year's is dropped from the base entirely.
+    #
+    # The exponent-and-minimum-span arithmetic itself now lives in
+    # finmath.cagr() via revenue_cagr() above, so the fix exists once rather
+    # than in every file that wants a growth rate. The UNIT SELECTION stays
+    # here: which periods survive the merge is a property of this pack, not of
+    # CAGR, and cagr_periods_dropped's exact shape is what the text report at
+    # the bottom of this file unpacks. Every output key below is unchanged.
     runits = series_units(pack, "revenue")
     ulast = runits.get(last)
     same_unit = [p for p in periods if runits.get(p) == ulast]
@@ -1122,14 +1449,10 @@ def derive(pack):
                                    for p in periods if runits.get(p) != ulast]
     base = same_unit[0] if same_unit else None
     if base is not None and base != last and rev[base] > 0 and rev[last] > 0:
-        try:
-            elapsed = ((datetime.date.fromisoformat(last)
-                        - datetime.date.fromisoformat(base)).days / 365.2425)
-        except ValueError:
-            elapsed = None
-        if elapsed and elapsed >= 0.75:
-            out["cagr"] = (rev[last] / rev[base]) ** (1.0 / elapsed) - 1.0
-            out["cagr_years"] = round(elapsed, 1)
+        got = revenue_cagr(rev[base], rev[last], base, last)
+        if got is not None:
+            out["cagr"] = got["cagr"]
+            out["cagr_years"] = got["years"]
             out["cagr_from"] = base
             out["cagr_to"] = last
             out["cagr_observations"] = len(same_unit)
@@ -1497,10 +1820,23 @@ def multiples(entry):
     used to fill this slot is cached for a week and drifts (Sandvik -0.382% in
     three hours). Where no quote was available the reference cap is used and
     market_cap_basis says so, with the age of the copy.
+
+    out["reason_codes"] carries the machine-readable form of whatever this
+    function suppressed: [{"code", "severity", "detail"}, ...] drawn from
+    decision_record.REASON_CODES. It is ADDITIVE - "error" and every note
+    field still say the same thing in the same words, because the text report
+    and the reference docs are written against those. The third of this
+    file's codes, PEER_FUNDAMENTALS_STALE, is not emitted here: it is a
+    property of the fundamentals rather than of the multiple, and
+    issuer_reason_codes() derives it so that it is still reported on a run
+    without --multiples. Call that function, not this one, for a row's full
+    set.
     """
     f = entry.get("fin")
     cap = entry.get("cap_live") or entry.get("market_cap")
-    out = {"market_cap": cap,
+    codes = []
+    out = {"reason_codes": codes,
+           "market_cap": cap,
            "market_cap_basis": entry.get("cap_basis"),
            "market_cap_reference": entry.get("market_cap"),
            "price_ccy": entry.get("ccy"),
@@ -1511,6 +1847,8 @@ def multiples(entry):
            "fundamentals_as_of": (f or {}).get("fy_end"),
            "report_ccy": (f or {}).get("currency")}
     if not f or not cap:
+        # No code: this is an absence of data, not the suppression of a number
+        # that could otherwise have been formed. See PEER_REASON_CODES.
         out["error"] = "DATA NOT AVAILABLE: no ESEF fundamentals or no market cap"
         return out
 
@@ -1527,6 +1865,11 @@ def multiples(entry):
     # the row, which is the whole point of DATA NOT AVAILABLE.
     pccy, rccy = entry.get("ccy"), f.get("currency")
     if not rccy:
+        codes.append(_code(
+            "PEER_CURRENCY_UNKNOWN", "BLOCK",
+            "the reporting currency of the latest fiscal year (%s) is not a "
+            "single ISO-4217 unit, so the whole row is suppressed"
+            % (f.get("fy_end") or "?")))
         out["error"] = ("DATA NOT AVAILABLE: %s - no multiple can be formed "
                         "against an unknown reporting currency"
                         % (f.get("currency_note")
@@ -1534,6 +1877,10 @@ def multiples(entry):
                               "year is ambiguous"))
         return out
     if not pccy:
+        codes.append(_code(
+            "PEER_CURRENCY_UNKNOWN", "BLOCK",
+            "the quote currency of this listing is unknown, so the market cap "
+            "cannot be put into %s" % rccy))
         out["error"] = ("DATA NOT AVAILABLE: the quote currency of this listing "
                         "is unknown, so the market cap cannot be put into %s"
                         % rccy)
@@ -1546,6 +1893,9 @@ def multiples(entry):
             r = tbl.get("rates", {}).get(rccy)
             conv = (eur * r) if r else (eur if rccy == "EUR" else None)
         if conv is None:
+            # No code: BOTH currencies are known here, so
+            # PEER_CURRENCY_UNKNOWN would misreport this, and REASON_CODES has
+            # no entry for an unavailable ECB fixing. Prose only until it does.
             out["error"] = ("DATA NOT AVAILABLE: reports in %s, quoted in %s and "
                             "no FX rate available - convert manually" % (rccy, pccy))
             return out
@@ -1555,6 +1905,20 @@ def multiples(entry):
         out["market_cap_in_report_ccy"] = cap
 
     nd = f.get("net_debt")
+    # BLOCK when net debt could not be derived at all - EV, EV/EBIT and
+    # EV/Sales are all suppressed below, so the row's EV columns are empty and
+    # a caller needs to know it was suppressed rather than missing. WARN when
+    # net debt WAS computed but its note flags something (an untagged current
+    # borrowings leg, say): the number stands and the reader must be told,
+    # which is exactly the WARN contract.
+    nd_note = f.get("net_debt_note")
+    if nd is None:
+        codes.append(_code(
+            "PEER_NET_DEBT_UNTAGGED", "BLOCK",
+            nd_note or "net debt is not derivable from this filing, so every "
+                       "EV multiple is suppressed rather than approximated"))
+    elif net_debt_note_is_caveat(nd_note):
+        codes.append(_code("PEER_NET_DEBT_UNTAGGED", "WARN", nd_note))
     # Minority interest is a claim on the consolidated assets that EBIT and
     # revenue are struck on, so it belongs in the numerator of an EV multiple
     # for the same reason net debt does. Omitting it understates EV for every
@@ -1722,10 +2086,179 @@ def resolve_target(query, issuers):
     return best[0][1]
 
 
+# ---------------------------------------------------------------------------
+# Offline selftest. No network: hand-built packs and entries only.
+# ---------------------------------------------------------------------------
+
+def _pack(rows, ccy=None, lei="SELFTEST0000000000LEI"):
+    """A minimal merged-facts pack in the shape esef_facts() returns.
+
+    Revenue only: everything else in derive() then reads an empty series and
+    returns None, which is exactly what a filing that tags nothing else does.
+    """
+    ccy = ccy or {}
+    data = {"revenue": {}}
+    for period, value in rows.items():
+        data["revenue"][period] = {"v": value,
+                                   "u": "iso4217:%s" % ccy.get(period, "SEK"),
+                                   "c": "Revenue"}
+    return {"lei": lei, "data": data, "filings": [],
+            "currency": None, "currencies": sorted(
+                {ccy.get(p, "SEK") for p in rows})}
+
+
+def selftest():
+    """The invariants the reason-code channel and the CAGR delegation rest on.
+
+    The load-bearing one is the vocabulary check: a code this file emits that
+    is absent from decision_record.REASON_CODES is not cosmetic, because
+    decision_record.validate() refuses the entire record it appears in.
+    """
+    today = datetime.date(2026, 9, 1)
+    failures = []
+
+    def check(label, cond):
+        print("  %-64s %s" % (label, "ok" if cond else "FAIL"))
+        if not cond:
+            failures.append(label)
+
+    print("peers_se selftest")
+    print(" CAGR: elapsed calendar time, not observation count")
+    got = revenue_cagr(100.0, 155.0, "2021-12-31", "2024-12-31")
+    check("a 3-year span reports 3.0 elapsed years, not 2",
+          got is not None and got["years"] == 3.0)
+    check("and the rate compounds over 3, not 2 (~+15.7%)",
+          got is not None and abs(got["cagr"] - 0.1572) < 0.001)
+    check("a span under the 0.75y floor is refused, not annualised",
+          revenue_cagr(100.0, 110.0, "2024-12-31", "2025-04-30") is None)
+    check("an unparseable endpoint is refused",
+          revenue_cagr(100.0, 110.0, "n/a", "2025-12-31") is None)
+
+    print(" CAGR: the output keys derive() writes are unchanged")
+    gapped = derive(_pack({"2021-12-31": 100.0, "2022-12-31": 120.0,
+                           "2024-12-31": 155.0}))
+    for key in ("cagr", "cagr_years", "cagr_periods_dropped", "cagr_from",
+                "cagr_to", "cagr_observations"):
+        check("gapped series still writes %s" % key, key in gapped)
+    check("the gap does not shrink the exponent", gapped["cagr_years"] == 3.0)
+    check("all three observations counted", gapped["cagr_observations"] == 3)
+    check("nothing dropped when the unit never changes",
+          gapped["cagr_periods_dropped"] == [])
+
+    print(" CAGR: a redenomination drops the old unit from the base")
+    mixed = derive(_pack({"2020-12-31": 100.0, "2022-12-31": 12.0,
+                          "2024-12-31": 16.0},
+                         ccy={"2020-12-31": "SEK", "2022-12-31": "EUR",
+                              "2024-12-31": "EUR"}))
+    check("the SEK year is dropped", [d["period"] for d in
+                                      mixed["cagr_periods_dropped"]]
+          == ["2020-12-31"])
+    check("the dropped entry keeps its {period, unit} shape",
+          mixed["cagr_periods_dropped"][0].get("unit") == "iso4217:SEK")
+    check("the base is the oldest EUR year", mixed["cagr_from"] == "2022-12-31")
+    check("so the rate is positive, not -35.5%", mixed["cagr"] > 0)
+
+    print(" staleness: one threshold, read from finfact")
+    stale, age, limit = annual_fundamentals_stale("2024-12-31", today)
+    check("an FY2024 annual is past its life on 2026-09-01", stale is True)
+    check("the limit is finfact.FRESHNESS_DAYS['annual_financials']",
+          limit == ff.FRESHNESS_DAYS["annual_financials"])
+    check("the age is elapsed days, not months", age == 609)
+    check("an unparseable fiscal-year end claims nothing",
+          annual_fundamentals_stale("", today)[0] is None)
+
+    print(" suppression codes")
+    unknown_ccy = multiples({"cap_live": 1000.0, "ccy": "SEK",
+                             "fin": {"fy_end": "2024-12-31", "currency": None,
+                                     "currencies_latest_fy": ["SEK", "EUR"],
+                                     "revenue": 500.0}})
+    check("an unknown reporting currency is still FATAL to the row",
+          unknown_ccy.get("error", "").startswith("DATA NOT AVAILABLE"))
+    check("no multiple leaked past it",
+          unknown_ccy.get("pe") is None and unknown_ccy.get("ev_sales") is None)
+    check("and it emits PEER_CURRENCY_UNKNOWN as a BLOCK",
+          unknown_ccy["reason_codes"][0]["code"] == "PEER_CURRENCY_UNKNOWN"
+          and unknown_ccy["reason_codes"][0]["severity"] == "BLOCK")
+
+    untagged_cash = multiples({"cap_live": 1000.0, "ccy": "SEK",
+                               "fin": {"fy_end": "2024-12-31",
+                                       "currency": "SEK", "revenue": 500.0,
+                                       "ebit": 50.0, "net_income": 40.0,
+                                       "net_debt": None, "gross_debt": 200.0,
+                                       "net_debt_note": "cash and cash "
+                                       "equivalents not tagged in ESEF"}})
+    check("untagged cash blocks with PEER_NET_DEBT_UNTAGGED",
+          any(c["code"] == "PEER_NET_DEBT_UNTAGGED" and c["severity"] == "BLOCK"
+              for c in untagged_cash["reason_codes"]))
+    check("EV multiples are suppressed, P/E is not",
+          untagged_cash.get("ev_ebit") is None
+          and untagged_cash.get("pe") is not None)
+
+    # A note that starts "leases included" or "no separately tagged" is the
+    # routine one every clean filing carries; anything else is a caveat on a
+    # net debt that WAS computed, and warns without suppressing.
+    routine = multiples({"cap_live": 1000.0, "ccy": "SEK",
+                         "fin": {"fy_end": "2024-12-31", "currency": "SEK",
+                                 "revenue": 500.0, "ebit": 50.0,
+                                 "net_debt": 100.0,
+                                 "net_debt_note": "leases included"}})
+    check("a routine net-debt note emits nothing", not routine["reason_codes"])
+    check("and its EV multiples are formed", routine.get("ev_ebit") is not None)
+
+    caveat = multiples({"cap_live": 1000.0, "ccy": "SEK",
+                        "fin": {"fy_end": "2024-12-31", "currency": "SEK",
+                                "revenue": 500.0, "ebit": 50.0,
+                                "net_debt": 100.0,
+                                "net_debt_note": "no current borrowings line "
+                                                 "tagged - normal for a filer "
+                                                 "with nothing due within a "
+                                                 "year"}})
+    check("a caveated but COMPUTED net debt warns, never blocks",
+          [(c["code"], c["severity"]) for c in caveat["reason_codes"]]
+          == [("PEER_NET_DEBT_UNTAGGED", "WARN")])
+    check("and the number still stands", caveat.get("ev_ebit") is not None)
+    check("net_debt_note_is_caveat agrees with the text report's own test",
+          net_debt_note_is_caveat("no current borrowings line tagged")
+          and not net_debt_note_is_caveat("leases included")
+          and not net_debt_note_is_caveat("no separately tagged lease liability")
+          and not net_debt_note_is_caveat(None))
+
+    stale_row = issuer_reason_codes({"fin": {"fy_end": "2024-12-31"}},
+                                    None, today)
+    check("stale fundamentals warn with PEER_FUNDAMENTALS_STALE",
+          len(stale_row) == 1
+          and stale_row[0]["code"] == "PEER_FUNDAMENTALS_STALE"
+          and stale_row[0]["severity"] == "WARN")
+    check("a fresh filer emits nothing",
+          issuer_reason_codes({"fin": {"fy_end": "2026-06-30"}}, None,
+                              today) == [])
+
+    print(" every emitted code exists in the closed vocabulary")
+    try:
+        import decision_record as dr
+    except (Exception, SystemExit):     # noqa: BLE001
+        dr = None
+    if dr is None or not hasattr(dr, "REASON_CODES"):
+        print("  %-64s %s" % ("decision_record.py not importable - skipped",
+                              "skip"))
+    else:
+        unknown = sorted(c for c in PEER_REASON_CODES
+                         if c not in dr.REASON_CODES)
+        check("no invented codes (%s)" % (", ".join(unknown) or "none"),
+              not unknown)
+
+    print("")
+    print("%d check(s) failed" % len(failures) if failures else "all checks passed")
+    return 1 if failures else 0
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("company", help="company name or ticker root, e.g. Sandvik")
+    # nargs="?" only so --selftest can run without naming a company; a missing
+    # company is still an argparse error, raised explicitly below.
+    ap.add_argument("company", nargs="?",
+                    help="company name or ticker root, e.g. Sandvik")
     ap.add_argument("--nordic", action="store_true",
                     help="widen the candidate pool to Copenhagen, Helsinki and "
                          "Reykjavik as well as Stockholm")
@@ -1745,7 +2278,14 @@ def main():
                          "hits zero and the candidate is gated out; 1.0 = 10x "
                          "(default)")
     ap.add_argument("--json", action="store_true", dest="as_json")
+    ap.add_argument("--selftest", action="store_true",
+                    help="run the offline invariant checks and exit (no network)")
     args = ap.parse_args()
+
+    if args.selftest:
+        return selftest()
+    if not args.company:
+        ap.error("the following arguments are required: company")
 
     t0 = time.time()
     markets = ["STO"] + (["CPH", "HEL", "ICE"] if args.nordic else [])
@@ -2126,9 +2666,44 @@ def main():
                           "evidence_too_thin": key in thin})
             if key in mult:
                 d["multiples"] = mult[key]
+            # Per ROW, so a decision about one company picks up exactly the
+            # codes that applied to it. Present with or without --multiples:
+            # without it only the fundamentals-staleness code can be known,
+            # and an empty list then means "nothing to report from what was
+            # computed", not "clean".
+            d["reason_codes"] = issuer_reason_codes(it, mult.get(key), today)
             return d
+
+        def reason_code_rollup(keys):
+            """The per-row codes, collapsed to one entry per code.
+
+            A run over fourteen issuers should not need the caller to walk
+            fourteen rows to discover that four of them have untagged cash.
+            BLOCK wins over WARN for the same code, so a count of blocking
+            suppressions can never be understated by a row that merely warned.
+            """
+            rollup, order = {}, []
+            for key in keys:
+                name = issuers[key]["display"]
+                for c in issuer_reason_codes(issuers[key], mult.get(key), today):
+                    slot = rollup.get(c["code"])
+                    if slot is None:
+                        slot = {"code": c["code"], "severity": c["severity"],
+                                "issuers": []}
+                        rollup[c["code"]] = slot
+                        order.append(c["code"])
+                    elif slot["severity"] == "WARN" and c["severity"] == "BLOCK":
+                        slot["severity"] = "BLOCK"
+                    if name not in slot["issuers"]:
+                        slot["issuers"].append(name)
+            for code in order:
+                rollup[code]["count"] = len(rollup[code]["issuers"])
+            return [rollup[code] for code in order]
+
         print(json.dumps({
             "target": pack_issuer(tkey),
+            "reason_codes": reason_code_rollup(
+                [tkey] + [k for _, k, _ in selected]),
             "method": {"weights": WEIGHTS, "curated_dimensions": sorted(CURATED_DIMS),
                        "not_computed": [{"dimension": d, "why": w}
                                         for d, w in NOT_COMPUTED],
@@ -2463,8 +3038,7 @@ def main():
             nd_note = m.get("net_debt_note")
             if m.get("net_debt") is None and nd_note:
                 nd_notes.append("%s: %s" % (name, nd_note))
-            elif nd_note and not nd_note.startswith(("leases included",
-                                                     "no separately tagged")):
+            elif net_debt_note_is_caveat(nd_note):
                 nd_caveats.append("%s: %s" % (name, nd_note))
             if m.get("net_income_owners") is None and m.get("net_income") is not None:
                 ni_notes.append("%s: P/E is on %s" % (name, m.get("net_income_basis")))
@@ -2556,12 +3130,12 @@ def main():
             print()
         tfy = (target.get("fin") or {}).get("fy_end")
         if tfy:
-            try:
-                age = (today - datetime.date.fromisoformat(tfy)).days
-            except ValueError:
-                age = None
-            limit = ff.FRESHNESS_DAYS.get("annual_financials", 460)
-            if age and age > limit:
+            # Same threshold, same comparison, now read from the one place
+            # both this file and valuation_gate.py use. Identical output: the
+            # old condition was `age and age > limit`, and stale IS
+            # `age > limit` (None on an unparseable date, as before).
+            stale, age, limit = annual_fundamentals_stale(tfy, today)
+            if stale and age:
                 print("  !! STALE FUNDAMENTALS: the latest ESEF annual report for "
                       "the target ends %s," % tfy)
                 print("     %d days ago, past the %d-day life of an annual figure "

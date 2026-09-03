@@ -46,17 +46,70 @@ SOURCES, and what each is actually good for (all verified 2026-08-31)
   4. Nasdaq reference data via nordic_shares.py - current share count per
      class, and the daily price series used for the split cross-check.
 
+=====================================================================
+THE ANSWER - IS NASDAQ NORDIC'S DAILY PRICE HISTORY SPLIT-ADJUSTED?
+
+    YES. nordic_shares.price_history() returns a BACK-ADJUSTED series.
+    After a split, the endpoint retroactively restates every close BEFORE
+    the split into post-split share terms, so the whole series is one
+    continuous, comparable line. This was previously stated both ways in
+    this codebase (v2.6 architecture review, highest-ranked defect) - this
+    section is the single corrected answer; every other docstring and
+    printed line in this file and in nordic_shares.py has been made to
+    agree with it.
+
+    THE EVIDENCE. This is measured, not assumed. price_check() below runs
+    exactly this comparison - the close immediately before a confirmed
+    exchange-notice split date against the close immediately after - and
+    it has been run against four confirmed, dated Stockholm splits:
+    Mycronic 2:1 (Jun 2025), Investor A/B 4:1 (May 2021), Bambuser 1:30
+    reverse (Dec 2025) and Nobia 1:10 reverse (May 2026). All four left NO
+    price discontinuity at the effective date; an UNADJUSTED series would
+    have shown the close divide (or, for a reverse split, multiply) by the
+    ratio right at that date, and none did. Four separate dated splits,
+    two directions (forward and reverse), agreeing every time, is a
+    pattern, not a coincidence.
+
+    WHAT THIS MEANS, CONCRETELY:
+      * Returns, drawdown-from-high, and percentile-of-own-history figures
+        computed directly on this price series are correct across a split
+        already - the series speaks one consistent share count throughout.
+        Do NOT run a second, manual split adjustment over it: this series
+        already IS adjusted. Doing so anyway DOUBLE-adjusts and distorts
+        the very numbers those calculations exist to protect - e.g. a
+        drawdown-from-high filter would read a real low as 2x, 4x or 10x
+        deeper than it is and false-cut a genuinely cheap, unsplit-priced
+        candidate from consideration.
+      * split_adjustment_factor() below (and its `factor`) must NEVER be
+        applied to a price, or to any ratio built directly from this price
+        series. Its job is narrower and different: restating a PER-SHARE
+        FUNDAMENTAL - EPS, dividend per share, book value per share - that
+        comes from a filing, is stated against the share count AT THE TIME
+        of that filing, and is NEVER itself back-adjusted by anyone.
+        Dividing a fundamental like that across a split with no factor is
+        the actual error `factor` exists to fix; dividing a price from
+        this series by it is a fabricated, wrong number where a correct
+        one already existed.
+      * This is the endpoint's OBSERVED behaviour on four measured cases,
+        not a documented Nasdaq guarantee - there is no published
+        adjustment policy for this feed. Do not extend "four for four" to
+        an issuer or event type not yet measured on faith. Always run
+        price_check() (or read a --splits report) before trusting a
+        cross-split comparison for a NEW issuer; if it ever comes back
+        "SERIES IS UNADJUSTED" or "INCONCLUSIVE" for a given case, believe
+        THAT result for THAT case, not this general note.
+=====================================================================
+
 THREE THINGS THIS CANNOT DO - read these before trusting a clean result
 
   * A "no corporate actions found" result is NOT proof there were none. It
     means nothing matched in the window and sources queried. Say so.
   * Split detection from a PRICE DISCONTINUITY DOES NOT WORK against Nasdaq
-    Nordic's chart endpoint. Measured on four confirmed Stockholm splits -
-    Mycronic 2:1 (Jun 2025), Investor A/B 4:1 (May 2021), Bambuser 1:30 reverse
-    (Dec 2025) and Nobia 1:10 reverse (May 2026) - the series is retroactively
-    BACK-ADJUSTED and every one of them left NO jump whatsoever. Splits here
-    therefore come from the exchange notice, which is authoritative; the price
-    check is run only to tell you WHICH convention the series you are holding
+    Nordic's chart endpoint, for exactly the reason above: it is
+    back-adjusted, so the honest reading of a clean series is "no evidence
+    either way", never "no split happened". Splits here therefore come
+    from the exchange notice, which is authoritative; the price check is
+    run only to tell you WHICH convention the series you are holding
     follows. See --splits output.
   * Unlisted share classes never appear in any of this. NIBE and Fenix Outdoor
     have unlisted A shares. The share-count DISCLOSURE covers them; the Nasdaq
@@ -111,6 +164,10 @@ try:
     import finfact
 except Exception:                                        # pragma: no cover
     finfact = None
+try:
+    import _bootstrap
+except Exception:                                        # pragma: no cover
+    _bootstrap = None
 
 CNS = "https://api.news.eu.nasdaq.com/news/query.action"
 
@@ -521,6 +578,40 @@ MONEY_AFTER = re.compile(r"(?i)^\s*(SEK|EUR|NOK|DKK|USD|kronor|kr\b)")
 
 
 def _to_int(raw):
+    """Parse a share-count integer written with any thousands separator.
+
+    v3.0.0 consolidates number parsing into scripts/numparse.py so this is
+    not a fourth private copy of the same space/nbsp/comma/period stripping
+    every other script in this toolkit used to do its own way (mfn_news.py's
+    to_number, nordic_shares.py's num, and others each grew a slightly
+    different version). Delegation goes through _bootstrap.soft_load, which
+    swallows (Exception, SystemExit), so a parallel edit that leaves
+    numparse.py momentarily broken - or a checkout that predates it - degrades
+    this call to the exact local behaviour it has always had, rather than
+    crashing a caller that only wanted an int back.
+
+    Share counts here are ALWAYS whole numbers with thousands grouping only -
+    never a decimal point - so "." is stripped as a separator right alongside
+    "," and the various space characters in the fallback path, exactly as
+    before. numparse is tried first (to_int, then to_number as a fallback
+    entry point, since the exact name was not yet fixed when this was
+    written); either result is coerced to int, and any failure - missing
+    module, missing function, or a value it could not parse - falls through
+    to the local parse below rather than raising.
+    """
+    if _bootstrap is not None:
+        numparse = _bootstrap.soft_load("numparse")
+        if numparse is not None:
+            for fn_name in ("to_int", "to_number"):
+                fn = getattr(numparse, fn_name, None)
+                if fn is None:
+                    continue
+                try:
+                    val = fn(raw)
+                    if val is not None:
+                        return int(val)
+                except Exception:
+                    pass
     cleaned = raw
     for ch in (" ", "\u00a0", "\u202f", "\u2009", ",", "."):
         cleaned = cleaned.replace(ch, "")
@@ -1080,14 +1171,42 @@ def share_history(company, fetch_bodies=40):
 # ---------------------------------------------------------------------------
 
 def price_check(company, effective_date, expected_factor):
-    """Does the unadjusted price series show the split, or was it back-adjusted?
+    """Does THIS price series show the split discontinuity, or was it back-adjusted?
 
     THIS IS A DIAGNOSTIC ON THE PRICE SERIES, NOT EVIDENCE ABOUT THE SPLIT.
-    Measured against four real Stockholm splits, Nasdaq Nordic's chart endpoint
-    back-adjusts, so the honest answer is almost always "no discontinuity" and
-    that says nothing about whether the split happened. What it does tell you
-    is whether the series in your hands already has the split baked in - which
-    is exactly what you need to know before you divide anything by it.
+    Measured against four real Stockholm splits (see the module docstring's
+    "THE ANSWER" section), Nasdaq Nordic's chart endpoint back-adjusts, so the
+    honest answer is almost always "no discontinuity" and that says nothing
+    about whether the split happened - the exchange notice is what proves the
+    split; this only tells you which convention the SERIES follows. That is
+    exactly what you need to know before you divide anything by a factor.
+
+    Returns one of three outcomes, each carrying a plain `instruction` for
+    the caller in addition to the human-readable `detail` - do not guess past
+    either:
+
+      SERIES IS UNADJUSTED           - the rare case; the close falls (or, for
+                                        a reverse split, rises) by roughly the
+                                        split factor right at the effective
+                                        date. instruction: prices before this
+                                        date are NOT comparable with prices
+                                        after it - apply `expected_factor` (or
+                                        split_adjustment_factor's `factor`) to
+                                        restate one side before comparing.
+      SERIES IS ALREADY SPLIT-ADJUSTED - the normal case for this endpoint;
+                                        no discontinuity at a confirmed split.
+                                        instruction: do NOT apply any split
+                                        factor to this price series - it is
+                                        already stated in one consistent
+                                        share count throughout.
+      INCONCLUSIVE                   - the move matches neither pattern
+                                        cleanly (ordinary volatility, a
+                                        trading gap, a second event on the
+                                        same date). instruction: do NOT apply
+                                        a factor and do NOT assume the series
+                                        is adjusted either - treat this date
+                                        as unresolved and say so rather than
+                                        guessing either way.
     """
     if nordic_shares is None or not effective_date:
         return {"status": "DATA NOT AVAILABLE",
@@ -1125,13 +1244,23 @@ def price_check(company, effective_date, expected_factor):
         result["detail"] = ("the close falls by roughly the split factor across "
                             "the effective date - prices before this date are "
                             "NOT comparable with prices after it")
+        result["instruction"] = ("APPLY a split factor before comparing prices "
+                                 "across this date - this series has NOT been "
+                                 "restated. This is the rare case for this "
+                                 "endpoint; double-check before trusting it.")
     elif abs(observed - 1) < 0.15:
         result["status"] = "SERIES IS ALREADY SPLIT-ADJUSTED"
         result["detail"] = ("no discontinuity at a confirmed split - Nasdaq has "
                             "back-adjusted the history. Do NOT apply the factor "
                             "again. This is the normal case for this endpoint.")
+        result["instruction"] = ("Do NOT apply any split factor to this price "
+                                 "series - it already speaks one consistent "
+                                 "share count across the split date.")
     else:
         result["status"] = "INCONCLUSIVE"
+        result["instruction"] = ("Do NOT apply a factor and do NOT assume this "
+                                 "series is adjusted either - the evidence is "
+                                 "ambiguous. Say so rather than guessing.")
         result["detail"] = ("the move across the date matches neither an "
                             "unadjusted split nor a clean series - ordinary "
                             "volatility, a gap in trading, or a second event")
@@ -1243,13 +1372,21 @@ def unexplained_share_count_moves(events, classified_rows, window_days=15):
 # ---------------------------------------------------------------------------
 # Historical adjustment factor between two dates (spec 8)
 #
-# WHY THIS EXISTS: Nasdaq Nordic's price history is UNADJUSTED for splits and
-# dividends (nordic_shares.price_history's own docstring). A raw price ratio,
-# or an EPS series, spanning a split is wrong by the split factor and nothing
-# in either data feed says so. A caller building a historical multiple range
-# needs one question answered before it divides anything: between two dates,
-# what happened to the share count, and is there a clean multiplicative
-# factor that can be applied, or not.
+# WHY THIS EXISTS: nordic_shares.price_history's daily series is BACK-ADJUSTED
+# for splits (measured, see the module docstring's "THE ANSWER" section above
+# - price_check() below is the check that established this). A PER-SHARE
+# FUNDAMENTAL is not: EPS, dividend per share and book value per share come
+# from a filing, are stated against the share count AT THE TIME of that
+# filing, and are never retroactively restated by anyone. A fundamental
+# series spanning a split is wrong by the split factor and nothing in the
+# filing feed says so. A caller building a historical multiple range (a price
+# from the ALREADY-ADJUSTED price series divided by a FUNDAMENTAL that is
+# NOT) needs one question answered before it divides anything: between two
+# dates, what happened to the share count, and is there a clean multiplicative
+# factor that can be applied to the fundamental side, or not. This factor is
+# for that fundamental side ONLY - see the module docstring for why it must
+# never be applied to a price or a price ratio from this toolkit's price
+# series.
 #
 # THE DESIGN CHOICE THAT MATTERS: only a CONFIRMED split (Nasdaq exchange
 # notice, ratio and effective date straight from Issuer Surveillance) ever
@@ -1299,6 +1436,14 @@ def split_adjustment_factor(company, date_from, date_to, pages=3):
       reliable                False if anything here should stop a caller
                                from applying `factor` unattended
       warnings                plain-English cautions, always read these
+
+    APPLY `factor` TO A PER-SHARE FUNDAMENTAL ONLY (EPS, dividend per share,
+    book value per share - a filing figure, never itself restated for a
+    split). NEVER apply it to a price, or a price ratio, from
+    nordic_shares.price_history: that series is already back-adjusted for
+    splits (measured - see the module docstring's "THE ANSWER" section and
+    price_check() below), and multiplying an already-adjusted price by this
+    factor double-adjusts it.
     """
     warnings = []
     notices = find_split_notices(company)
@@ -1452,9 +1597,13 @@ def print_factor(result):
     print()
     if result["factor"] is not None:
         print("  CUMULATIVE CONFIRMED SPLIT FACTOR: x%.6f" % result["factor"])
-        print("  Multiply a PRE-window unadjusted price or per-share figure by")
-        print("  this to express it in POST-window share terms. This factor")
-        print("  covers confirmed splits ONLY - read the warnings below before")
+        print("  Multiply a PRE-window PER-SHARE FUNDAMENTAL (EPS, dividend or")
+        print("  book value per share - a filing figure, never restated for a")
+        print("  split) by this to express it in POST-window share terms. Do")
+        print("  NOT apply this to a price from nordic_shares.price_history -")
+        print("  that series is already back-adjusted for splits; multiplying")
+        print("  it by this factor double-adjusts it. This factor covers")
+        print("  confirmed splits ONLY - read the warnings below before")
         print("  assuming nothing else changed the share count in this window.")
     else:
         print("  NO FACTOR RETURNED. Applying an adjustment here would be a")
@@ -1693,7 +1842,7 @@ def print_splits(company, notices, announcements, price_checks, count_flags):
         print("  count disclosure on both sides of it; many small caps do not.")
         print()
 
-    print("  CROSS-CHECK 2 - unadjusted price series:")
+    print("  CROSS-CHECK 2 - price series discontinuity (usually clean; see below):")
     if not price_checks:
         print("    Not run (no confirmed effective date to test).")
     for pc in price_checks:
@@ -1762,8 +1911,11 @@ def main():
                          "breaking action in the window (rights issue, "
                          "directed issue, buyback+cancellation, spin-off, "
                          "...), each flagged separately - for adjusting a "
-                         "historical price or per-share figure without "
-                         "guessing at what a rights issue or buyback did to it")
+                         "historical PER-SHARE FUNDAMENTAL (EPS, dividend, "
+                         "book value per share) without guessing at what a "
+                         "rights issue or buyback did to it. Do NOT apply to "
+                         "a price from nordic_shares - that series is already "
+                         "back-adjusted for splits")
     ap.add_argument("--cision", action="store_true",
                     help="also sweep Cision (untagged; Sandvik, Atlas Copco, "
                          "Hexagon, AB Volvo publish there)")

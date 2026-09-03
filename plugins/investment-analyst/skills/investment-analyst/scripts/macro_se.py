@@ -596,6 +596,7 @@ def classify(query):
         sec = section_by_letter(q)
         if sec:
             return {"confidence": "HIGH", "section": sec,
+                    "granularity": "section",
                     "basis": "explicit NACE section letter", "hits": []}
         if q.upper() in UNCOVERED:
             return {"confidence": "UNCOVERED", "section": None,
@@ -608,8 +609,21 @@ def classify(query):
         div = int(m.group(1))
         sec = section_for_division(div)
         if sec:
+            # Find the range for this section to explain the widening in the basis
+            div_range = None
+            for letter, code, rng, name in SECTIONS:
+                if letter == sec[0]:
+                    div_range = rng
+                    break
+            if div_range:
+                basis = ("SNI division %d requested; section %s (divisions %d–%d) "
+                         "publishes as aggregate in Företagens ekonomi"
+                         % (div, sec[0], div_range[0], div_range[1]))
+            else:
+                basis = "SNI division %02d maps to section %s" % (div, sec[0])
             return {"confidence": "HIGH", "section": sec,
-                    "basis": "SNI division %02d given explicitly" % div,
+                    "granularity": "section", "widened": True,
+                    "basis": basis,
                     "hits": []}
         for letter, rng in UNCOVERED_RANGES.items():
             if rng[0] <= div <= rng[1]:
@@ -1240,6 +1254,8 @@ def print_industry(b, eu=None):
     print("  Query               %s" % b["query"])
     c = b["classification"]
     print("  Classification      %s  (%s)" % (c["confidence"], c["basis"]))
+    if c.get("widened"):
+        print("  Data granularity    section (divisions aggregate in SCB table)")
 
     if b["status"] != "OK":
         print()

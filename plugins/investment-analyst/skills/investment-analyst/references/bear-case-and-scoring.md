@@ -1,9 +1,15 @@
 # Devil's advocate, scorecard and recommendation
 
-## Part 1 — Bear case / devil's advocate
+## Part 1 — Bear case / devil's advocate (working discipline, underlying material)
 
 **Mandatory. Never skip, never soften, and never write it after the
 recommendation is already formed.** Write it before scoring.
+
+The devil's advocate work is working discipline and underlying material. What
+reaches the reader in the answer is not the full interrogation but its summary:
+the bear-scenario valuation, the single largest risk stated in the verdict's
+`Risk` line, and material challenges surfaced in the `Talar emot` list
+(SKILL.md §6 section 4).
 
 The purpose is adversarial: actively try to prove the investment case wrong. If
 this section reads like a list of generic risks ("competition", "macro
@@ -49,12 +55,12 @@ forward to it. Both directions belong in the table —
 what would make you sell, and what would make you buy more.
 
 ```markdown
-| # | Trigger                     | Threshold                  | Effect                | Check in         |
-|---|-----------------------------|----------------------------|-----------------------|------------------|
-| 1 | EBIT margin                 | <15% two straight quarters | thesis breaks -> SELL | quarterly report |
-| 2 | Top-3 mining customer capex | guidance cut >10%          | base -> bear          | customer CMDs    |
-| 3 | Dilutive non-core M&A       | deal >5% of market cap     | conviction -> LOW     | press release    |
-| 4 | Above bull value            | > SEK 540                  | valuation exit        | quote            |
+| # | Utlösare                   | Tröskel                    | Följd                 | Kontrolleras i   |
+|---|----------------------------|----------------------------|-----------------------|------------------|
+| 1 | Rörelsemarginal            | <15% två kvartal i rad     | tesen bryts -> SÄLJ   | kvartalsrapport  |
+| 2 | Största gruvkundernas capex| guidning sänks >10%        | bas -> bear           | kunders kapitalmarknadsdagar |
+| 3 | Utspädande M&A utanför kärnan | affär >5% av börsvärdet | övertygelse -> LÅG    | pressmeddelande  |
+| 4 | Över bull-värdet           | > SEK 540                  | värderingsexit        | kurs             |
 | 5 | Price below                 | < SEK 330, thesis intact   | conviction -> HIGH    | quote            |
 ```
 
@@ -63,6 +69,18 @@ Rules:
 - **Every threshold numeric and checkable against a future filing.** "Growth
   slows" is not a trigger. "Organic growth below 3% for two consecutive
   quarters" is. If you could not verify a row six months from now, rewrite it.
+- **This table is also the thesis ledger's input contract.** A row of the form
+  `<metric> <op> <value>[%|x] [for <n> consecutive quarters|years]` is exactly
+  what `thesis_ledger.py --breaker` parses, which is why the numeric-threshold
+  rule above is not a style preference: on a BUY or SELL call, `/analyze` stores
+  these rows and `/portfolio`'s layer 1 re-tests them against the next filing.
+  A row that cannot be expressed as a breaker was never a trigger.
+- **The price rows stay out of the ledger.** Rows 4 and 5 above are valuation
+  exits and belong in the delivered table, but the ledger stores no prices at
+  all — a thesis that flips on a quote is a trade, not a thesis — so only the
+  fundamental rows are passed to `--breaker`. Run `thesis_ledger.py --metrics`
+  to see which metrics can be tested automatically and which need a hand-read
+  figure through `--observe`.
 - **Name where it is reported**, so the reader knows when to look.
 - Three to six rows. More than that is a watchlist, not a thesis.
 - **This table is the only place a threshold is written.** The verdict's
@@ -71,7 +89,12 @@ Rules:
   without repeating a threshold, in the form
   `Triggers   see Bevakning in the closing block — N rows`.
 
-## Part 2 — Investment scorecard
+## Part 2 — Investment scorecard (underlying material)
+
+The scorecard is underlying material per SKILL.md §6: produced on every STANDARD
+and DEEP run, printed only when the reader requests the underlying material. The
+**Investment Score derived from it** (and capped by Data Confidence) appears on
+the verdict block in the delivered answer; the nine-category detail does not.
 
 Nine categories, each 0-10 with one sentence of justification drawn from
 evidence already presented. No new claims here.
@@ -145,22 +168,28 @@ one of them moves by a realistic amount, say which one and by how much.
 Low data confidence does not veto a BUY, but it does cap the conviction, and
 the conviction — not the data confidence number, which already sits on the
 scores line directly beneath — must appear on the recommendation line, not in a
-footnote: `BUY — LOW CONVICTION`.
+footnote: `KÖP — LÅG ÖVERTYGELSE` (SKILL.md §13).
 
-### The decision record
+### The decision record (underlying material)
 
-The closing block's shape is defined once, in `SKILL.md` §9, and is not
-restated here — one template with one owner. Two rules bear repeating because
-they are the ones most easily lost:
+The decision record is underlying material per SKILL.md §6: printed only when the
+reader requests to see the underlying material. Its shape is defined once, in
+`SKILL.md` §9, and is not restated here — one template with one owner.
 
-- It must be **numerically identical to the verdict block**. Same
-  recommendation, same conviction, same range, same two scores. A divergence
-  between the two is a defect, not a nuance.
+Three rules bear repeating because they are the ones most easily lost:
+
+- **The record is emitted as JSON and the block is rendered from it**, so the
+  verdict block's numbers are copies of the record's rather than the other way
+  round. `decision_record.py` recomputes the expected return and the margins of
+  safety and refuses the record when they disagree with its own inputs.
+- **The conviction ceiling is enforced there too**, from the depth and the
+  reason codes. A record above it is refused rather than warned about, so a
+  weak-evidence call cannot be filed as a confident one.
 - **Data Confidence is never omitted**, and no point estimate appears on the
   fair-value line.
 
 `Rests on` names the two or three assumptions the call actually depends on,
-each tagged `ASSUMPTION`. Triggers follow the reference form given in Part 1's
+each with its basis. Triggers follow the reference form given in Part 1's
 trigger-table rules — never a restated threshold.
 
 Close with one line: this is analysis, not investment advice.

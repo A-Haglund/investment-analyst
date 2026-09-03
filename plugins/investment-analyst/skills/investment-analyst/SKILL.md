@@ -13,8 +13,15 @@ and a recommendation that follows from the analysis rather than from sentiment.
 
 ## 1. Evidence discipline — applies to every sentence you write
 
-Tag every material claim. This is the core of the skill; without it the output is
-an opinion piece.
+Tag every material claim **as you work**. This is the core of the skill; without
+it the output is an opinion piece.
+
+**The tags are working discipline, not output.** They govern what you may write
+and how confident you may sound. They are not printed in the delivered analysis
+— §7 defines how uncertainty reaches the reader instead, in plain words. A tag
+appears in the delivered text only inside the Evidence block and the decision
+record, and those are printed only when the reader asks for the underlying
+material (§7).
 
 | Tag | Means | Requires |
 |---|---|---|
@@ -103,11 +110,11 @@ verdict block's identity line (§5) — and offer the next level up at the end.
 | Depth | Time | What it runs |
 |---|---|---|
 | **TLDR** | 60–90 s | Phase 0 identity · price · fair value from multiples against own history, with the upside range · the call · three to five plain sentences. Under 150 words, no tables. Conviction and the largest data gap stated in the prose |
-| **QUICK** | 2–4 min | Phase 0 identity · price · headline financials · multiples against own history · the single biggest risk · for a Swedish name, short interest and insider net · Data Confidence stated. No Evidence block, no scenarios, no scorecard |
-| **COMPARE** | 4–6 min per company | Everything in QUICK, plus the Moat Score and a light bear/base/bull, so downside and risk/reward are real. No DCF, no reverse DCF, no peer set, no full nine-category scorecard — no Investment Score. Conviction capped at MEDIUM, as at QUICK |
-| **STANDARD** | 8–12 min | Phases 0–9 · full source chain per the registry · fundamentals · moat, growth, management · valuation from multiples · bear/base/bull · devil's advocate · scorecard · Evidence block |
+| **QUICK** | 2–4 min | Phase 0 identity · price · headline financials · multiples against own history · the single biggest risk · for a Swedish name, short interest and insider net · Data Confidence stated. No verification phase, no scenarios, no scorecard |
+| **COMPARE** | 4–6 min per company | Everything in QUICK, plus the Moat Score and a light bear/base/bull, so downside and risk/reward are real. No DCF, no reverse DCF, no peer set, no full nine-category scorecard — no Investment Score |
+| **STANDARD** | 8–12 min | Phases 0–10 · full source chain per the registry · fundamentals · moat, growth, management · valuation from multiples · bear/base/bull · devil's advocate · scorecard · verification and Evidence block |
 | **DEEP** | 25–35 min | Everything in STANDARD plus DCF and reverse DCF with sensitivities · peer multiples recomputed from filings rather than taken from the scored peer set · 10-year valuation history · ownership and its trend · short-interest trend · guidance record · corporate actions · industry benchmark · restatement check |
-| **PORTFOLIO** | variable | Layers 1–2 across all holdings (breakers and alerts), then STANDARD on what they flag. Cost scales with what changed rather than with holding count. Conviction capped at MEDIUM for holdings not taken to depth. Runs the three-layer triage. See `references/portfolio.md`. |
+| **PORTFOLIO** | variable | Layers 1–2 across all holdings (breakers and alerts), then STANDARD on what they flag. Cost scales with what changed rather than with holding count. Runs the three-layer triage. See `references/portfolio.md`. |
 
 COMPARE exists so `/compare` can rank companies on real numbers rather than
 fabricated ones: the Moat Score and a light scenario build give a genuine base
@@ -123,11 +130,36 @@ holding against its stored thesis and may fire a breaker to EXIT; layer 2
 runs cheap alerts on all holdings; layer 3 takes to STANDARD depth only what
 layers 1 and 2 flagged. The cost scales with what changed rather than with the
 number of holdings — a clean 20-position portfolio costs much less than 20
-individual STANDARD analyses. Conviction caps at MEDIUM for any holding not
-taken to depth. See `references/portfolio.md` for the ADD/HOLD/TRIM/EXIT
-criteria, the cost-basis rule, and ISK-specific observations.
+individual STANDARD analyses. See `references/portfolio.md` for the
+ADD/HOLD/TRIM/EXIT criteria, the cost-basis rule, and ISK-specific
+observations.
+
+**Depth sets a conviction ceiling, and code enforces it.** The shallow depths
+run less work, so they support less confidence. That ceiling is not a rule you
+apply by hand: `scripts/decision_record.py` computes it from the depth and the
+run's reason codes and refuses a record above it. The ladder, every cap and the
+reason code each cap keys on live in `references/data-quality.md` §7, which is
+their single home. Nothing else in this document restates a cap value.
 
 Phase 0 runs at every depth. It is the one thing that is never traded for speed.
+
+**Depth buys work, not words.** The time column above is analyst time, not
+output length. What reaches the reader is capped independently, and the cap is
+hard:
+
+| Depth | Delivered length |
+|---|---|
+| **TLDR** | 150 words |
+| **QUICK** | 350 words |
+| **COMPARE** | the ranking table, plus 80 words per company |
+| **STANDARD** | 800 words |
+| **DEEP** | 1200 words |
+| **PORTFOLIO** | the action table, plus 80 words per holding |
+
+A DEEP run does far more work than a STANDARD one and says it in half a page
+more. Everything the extra work produced is still available — it is printed on
+request, per §7. Exceeding the cap is a defect in the same way an unsourced
+number is: the reader who stops reading has been given nothing.
 
 **Choosing when the user did not say:**
 
@@ -146,25 +178,27 @@ Phase 0 runs at every depth. It is the one thing that is never traded for speed.
 
 - TLDR omits everything except identity, price, fair value from multiples
   against the company's own history with its upside range, the call and its
-  single largest risk. Conviction caps at **MEDIUM**, and the biggest data gap
-  must appear in the prose — a short answer that reads as complete is worse
-  than none. TLDR is also the one depth that carries no inline tags: the
-  prose is written for a non-specialist and the figures are named in plain
-  words. Every other depth tags in full.
+  single largest risk. The biggest data gap must appear in the prose — a short
+  answer that reads as complete is worse than none.
 - QUICK omits moat scoring, growth decomposition, management analysis, scenarios
-  and the scorecard. It still gives a recommendation, but conviction is capped
-  at **MEDIUM** and the output must say which sections were skipped.
+  and the scorecard. It still gives a recommendation, and the output must say
+  which sections were skipped.
 - COMPARE omits the DCF, the reverse DCF, the peer set and the nine-category
   scorecard — so it produces no Investment Score. It adds the Moat Score and a
   light bear/base/bull to QUICK, which makes downside and risk/reward real.
-  Conviction caps at **MEDIUM**, as at QUICK.
 - STANDARD omits the DCF and reverse DCF. Fair value comes from multiples
   against the company's own history and peers. Say that is the basis.
 - DEEP omits nothing.
 
-End every TLDR, QUICK, COMPARE and STANDARD run with one line: what a deeper
-run would add and roughly how long it takes. Let the user ask; do not
-escalate on your own.
+End every TLDR, QUICK, COMPARE and STANDARD run with what a deeper run would
+add and roughly how long it takes. Let the user ask; do not escalate on your
+own. Fold it into the same closing line that offers the underlying material
+(§6) — **one trailing offer, never two**:
+
+```
+Vill du se underlaget — siffror, värdering, källor och Evidence-block — säg **visa underlaget**.
+En djupare körning (DEEP, ~25 min) lägger till kassaflödesvärdering och en tioårig ägar- och värderingshistorik.
+```
 
 ## 5. The verdict block — first, always, every depth
 
@@ -173,39 +207,56 @@ Read in ten seconds and enough on its own. Everything after it is the evidence.
 Monospace holds the three aligned numeric lines only. The prose sits outside the
 fence so it wraps at any width.
 
-The example below is a STANDARD-depth analysis.
+The block is written in the user's language throughout — **for a Swedish
+question, every word of it is Swedish**, including the header's own field
+names. §13 carries the term table. The example below is a STANDARD-depth
+analysis for a Swedish reader.
 
 ````
 ```
-VERDICT — Sandvik AB (SAND.ST, Nasdaq Stockholm Large Cap) · STANDARD · 2026-08-31
+OMDÖME — Sandvik AB (SAND.ST, Nasdaq Stockholm Large Cap) · STANDARD · 2026-08-31
 
-  BUY — MEDIUM CONVICTION
-  SEK 356.00 now -> fair value 420-470 (base) · +18% to +32% · exp. return +20.9%
-  Investment Score 74/100 · Data Confidence 61/100
+  KÖP — MEDEL ÖVERTYGELSE
+  SEK 356,00 nu -> rimligt värde 420-470 (bas) · +18% till +32% · förv. avk. +20,9%
+  Investeringsbetyg 74/100 · Datasäkerhet 61/100
 ```
 
-**Why.** Order intake has turned while the shares still price the 2024 trough.
-**Risk.** Mining capex is the whole thesis; a cut takes fair value to the bear
-case, SEK 310 (-13%).
-**Priced in.** ~4% long-run growth - below the company's own 10-year record.
-`OPINION - implied growth from current multiple`
-**Watch.** EBIT margin below 15% for two consecutive quarters ends the case
-(Bevakning, row 1, in the closing block).
-**Unverified.** EV/EBIT not computable - interim reports do not disclose EBIT.
-SBC is single-source.
+**Varför.** Orderingången har vänt upp igen, men kursen speglar fortfarande det
+svaga året 2024.
+**Risk.** Allt vilar på att gruvbolagen fortsätter investera. Drar de ned är
+aktien värd omkring SEK 310 — 13% under dagens kurs.
+**Inprisat.** Till dagens kurs räknar marknaden med att bolaget växer ungefär 4%
+om året på lång sikt, vilket är mindre än det klarat de senaste tio åren.
+**Bevaka.** Två kvartal i rad där rörelsemarginalen — hur stor del av
+intäkterna som blir vinst — faller under 15% bryter caset (`Bevakning`, rad 1).
+**Overifierat.** Rörelseresultatet redovisas inte i delårsrapporterna, så ett av
+de centrala värderingstalen gick inte att räkna fram.
 ````
 
-**The "Priced in" method and its tag depend on depth.** At STANDARD it comes
-from inverting the current multiple into an implied long-run growth rate,
-tagged `OPINION - implied growth from current multiple`. At DEEP it comes from
-the reverse DCF instead, tagged `OPINION - reverse DCF`. Use whichever method
-the depth actually ran; never tag a STANDARD run with the DEEP method's name.
+Five labelled lines, plain language, no tags. The reader of this block is not an
+analyst. The five labels are fixed and translated as a set — Swedish
+`Varför · Risk · Inprisat · Bevaka · Overifierat`, English
+`Why · Risk · Priced in · Watch · Unverified`. **Never mix the two sets in one
+run**; a Swedish analysis with an English `Watch` heading is the defect this
+rule exists to prevent.
+
+**The `Inprisat` line names its own method in words.** At STANDARD it comes
+from inverting the current multiple into an implied long-run growth rate — say
+"till dagens kurs räknar marknaden med…". At DEEP it comes from the reverse DCF
+instead. Use whichever method the depth actually ran, and never let a STANDARD
+run imply it did the DEEP one's work.
 
 Rules:
 
-- **Conviction on the recommendation line.** `BUY — LOW CONVICTION` is a
-  different instruction from `BUY`, and a reader who stops after one line must
-  still receive it.
+- **Every number on it is read off the validated decision record**, not
+  recomputed here. The record is emitted and checked first (§9); this block is
+  the reader's translation of it. Writing the verdict first and the record
+  afterwards is how the two used to diverge.
+- **Conviction on the recommendation line.** `KÖP — LÅG ÖVERTYGELSE` is a
+  different instruction from `KÖP`, and a reader who stops after one line must
+  still receive it. The ceiling is not yours to set: `decision_record.py`
+  computes it from the depth and the reason codes and refuses a record above it
+  (`references/data-quality.md` §7).
 - **Both scores side by side.** A 90/45 pair says more than either alone.
 - **Fair value is a range**, matched to the sensitivity analysis. A point
   estimate in a summary is where false precision does the most damage.
@@ -229,8 +280,8 @@ probability-weighted result across scenarios neither builds, and their second
 line ends at the upside range instead:
 
 ```
-SEK 356.00 now -> fair value 420-470 (base, multiples vs 10y own history) · +18% to +32%
-Investment Score n/a — no scorecard at this depth · Data Confidence 61/100
+SEK 356,00 nu -> rimligt värde 420-470 (bas, multiplar mot egen 10-årshistorik) · +18% till +32%
+Investeringsbetyg saknas — inget scorecard på denna nivå · Datasäkerhet 61/100
 ```
 
 The fair-value range itself comes from multiples against the company's own
@@ -239,53 +290,88 @@ leaving the reader to assume one.
 
 ## 6. Structure of a STANDARD or DEEP analysis
 
-Twelve sections. **DEEP deepens these sections; it never adds new ones.** Omit
-one only when it genuinely does not apply, and say so rather than dropping it
-silently.
+Two layers. The **answer** is what you print. The **underlying material** is
+produced in full and printed only when the reader asks for it (§7). The work is
+identical either way; only the delivery differs.
 
-| # | Section | Carries | Form |
-|---|---|---|---|
-| 1 | **Verdict** | the call, in ten seconds | monospace header + labelled prose |
-| 2 | **Snapshot** | identity, market cap, headline multiples | one table |
-| 3 | **Business and moat** | what it does, why it persists, Moat Score | prose |
-| 4 | **Financials** | quality, growth, cash conversion, balance sheet | table + sparklines |
-| 5 | **Owners and management** | capital allocation, insiders, short interest, ownership | prose + small table |
-| 6 | **Valuation** | multiples vs history and peers; DEEP adds DCF, reverse DCF, sensitivities, industry benchmark | table + range marker |
-| 7 | **Scenarios** | bear, base, bull with their drivers | table |
-| 8 | **Bear case and red flags** | the steelman, the red-flag screen | prose |
-| 9 | **Scorecard** | nine categories | table with a bar column |
-| 10 | **Thesis and triggers** | the thesis and **every** invalidation trigger | prose + one trigger table |
-| 11 | **Evidence** | data confidence, verification, sources | grouped monospace block |
-| 12 | **Decision record** | the fixed-shape record | monospace |
+### The answer — seven sections, in this order
 
-**One number, one home — with three named exceptions.** The recommendation, the
-two scores and the triggers each live in exactly one canonical place. Sections
-that need them reference that place rather than restating them. Price is not
-single-homed: it is carried by the verdict and the decision record as a
-deliberate checksum (below), and the Evidence block's `IDENTITY` and `PRICE`
-lines carry it again as context for the reader, not as a third figure to
-reconcile against the other two. Any copy of price beyond those three, or any
-copy of the recommendation, the scores or the triggers beyond their own named
-exception below, is a defect.
+| # | Section | Carries | Form | Words |
+|---|---|---|---|---|
+| 1 | **Omdöme** | the call, in ten seconds | monospace header + five labelled plain lines | 150 |
+| 2 | **Vad bolaget är** | what it owns and does *now* | 3–5 short marked bullets | 120 |
+| 3 | **Varför priset ligger där det ligger** | the one thing driving the case | 2–4 sentences | 90 |
+| 4 | **Talar för / Talar emot** | evidence already established, compressed | two marked lists, 3–5 items each | 180 |
+| 5 | **Scenarier** | bear, base, bull, each with a value | one table + the range marker | 60 |
+| 6 | **Vad rekommendationen betyder i praktiken** | the call translated into meaning | 2–4 sentences | 90 |
+| 7 | **Slutsats** | signal line, `Bevakning`, `Horisont`, `Viktigast` | §9 | 110 |
 
-The single deliberate exception for the recommendation and the two scores: the
-**verdict** (section 1, written for a human) and the **decision record**
-(section 12, a fixed shape that can be compared across companies) carry the
-same figures. **They must be numerically identical — any divergence is a
-defect**, which turns the repetition into a checksum. Data Confidence carries
-a third home besides those two: the **Evidence block**'s header (section 11)
-states it again for the reader who arrives there directly. All three copies of
-Data Confidence must agree; Investment Score keeps only the first two.
+**The per-section budget is the enforceable form of the 800-word cap.** A
+global cap cannot be checked while writing; a section budget can. Count as you
+close each section. Borrowing across sections is allowed only downward — a
+short section does not license a long one, since the reader's patience is not
+transferable. At DEEP every budget scales by 1.5; at QUICK sections 3 and 5 are
+dropped and the rest are halved.
 
-**Do not dump the raw data into the body.** The engine collects far more than
-belongs in a readable analysis. The body carries what matters, what is
-verified, what is uncertain, what the market prices in, what could go wrong,
-and what would change the call. Full provenance lives in Evidence.
+**Nothing follows section 7.** No source list, no bibliography, no appendix, no
+"Sources:" line. Sources live in the Evidence block, which is underlying
+material — a trailing source list is that block leaking into the answer, and it
+is the single most common way this format fails.
+
+Section 6 is the one most often skipped and the one a non-specialist needs most.
+`HOLD` is a word about a price, not an instruction to a holder. Section 6
+explains **what the call means** — "jag tycker inte den är dyr nog att sälja,
+men inte billig nog att köpa mer". `Äger du den redan` in `Slutsats` then says
+**what to do now**. Two different beats; keep both, and do not let section 6
+drift into repeating the closing advice.
+
+**DEEP deepens these sections; it never adds new ones.** Omit one only when it
+genuinely does not apply, and say so rather than dropping it silently. QUICK
+drops sections 3 and 5; TLDR carries 1 and 7 only.
+
+### The underlying material — produced, printed on request
+
+The snapshot table, the financial statements and their sparklines, moat scoring,
+owners and management, the full valuation build with peers and history, the
+nine-category scorecard, the **Evidence block** and the **decision record**
+(§9). Every figure in the answer traces to something here.
+
+None of it is printed unless asked for. Every run therefore closes, after
+`Viktigast`, with exactly one line naming what is available:
+
+```
+Vill du se underlaget — siffror, värdering, källor och Evidence-block — säg **visa underlaget**.
+```
+
+On that request, print the underlying material in the order above, in full,
+with tags — that is the one place the reader has asked for the analyst's view
+rather than the answer.
+
+**One number, one home.** The **decision record** (§9) holds the
+recommendation, the conviction, the fair-value range, the expected return and
+both scores; it is validated before anything is written, and the **verdict
+block** is where the reader meets those numbers. The rest of the answer
+references the verdict block and never restates it. Two exceptions, both
+deliberate: `Viktigast` repeats Data Confidence for the reader who skips to the
+end, and the Evidence block repeats what it verified when the underlying
+material is printed. **Every copy is read off the record — a copy that
+disagrees with it is a defect**, which is what makes the repetition a check
+rather than a second opinion.
+
+**Do not dump the raw data into the answer.** The engine collects far more than
+belongs in a readable analysis. The answer carries what matters, what could go
+wrong, and what would change the call. Everything else waits in the underlying
+material.
 
 Length is not evidence of rigour. A reader who cannot find the conclusion has
 been given a worse product, however complete it is.
 
 ### Charts
+
+**The answer carries one chart: the scenario range marker in section 5.**
+Sparklines, the P/E range bar and the scorecard bar column belong to the
+underlying material. A chart in a 700-word answer costs lines the argument
+needs.
 
 Text only. Unicode blocks and aligned columns, **nothing wider than 88
 characters**, bars at most 40 cells, and every sparkline labelled with real
@@ -314,20 +400,65 @@ P/E vs own 10-year range
 
 ```
   310 ──────────●─────────────├══════════┤──────────────── 540
-  bear 310 · now 356 · base 420-470 · bull 540
+  bear 310 · nu 356 · bas 420-470 · bull 540
 ```
+
+**The scenario ladder's legend is in the reader's language**, since it is the
+one chart the answer carries. `bear` and `bull` stay — they are the scenario
+names in Swedish market usage too, and no native form is in circulation — but
+`now` is `nu` and `base` is `bas`. Charts in the underlying material follow
+that material's own convention.
 
 The fourth is a bar column inside the scorecard table. Nothing else: no chart for a
 single number, no ownership chart over a register that is explicitly a floor
 rather than a total, no peer bars over a set that reports itself as low
 confidence, and nothing at all in the verdict or Evidence blocks.
 
-## 7. Output format
+## 7. Who you are writing for
 
-Deliver the analysis as **text in the conversation** by default. Do not build an
-HTML artifact, charts, or a rendered report unless the user asks for one —
-rendering and verifying a visual report can cost more time than the analysis
-itself, and it is not what most questions need.
+**Write for someone who owns shares and follows the news, not for an analyst.**
+They can follow an argument about a business. They have not memorised what
+EV/EBITDA means, they do not know what a moat score is, and they will stop
+reading a page that opens with a table of ratios.
+
+This is a constraint on the *writing*, never on the *work*. Nothing in §§1–3 is
+relaxed. An analysis that is easy to read and quietly unsourced is the exact
+failure this skill exists to prevent.
+
+### Six rules for the delivered text
+
+1. **No inline tags.** `FACT`, `ESTIMATE`, `ASSUMPTION` and `OPINION` do not
+   appear in the answer. They govern what you may write; they are printed only
+   in the Evidence block and the decision record, which are underlying material.
+2. **Uncertainty is stated in words, not in notation.** Where a tag would have
+   carried the warning, a clause must:
+   - `SINGLE SOURCE` → "bolagets egen siffra, ingen oberoende källa bekräftar den"
+   - `ESTIMATE` → "analytikernas prognos, inte ett utfall"
+   - `ASSUMPTION` → "mitt antagande — om det är fel faller värderingen"
+   - `DATA NOT AVAILABLE` → "det gick inte att få fram"
+   - `CONFLICT` → "två källor säger olika saker, så jag räknar inte med den"
+   The warning becomes *more* visible this way, not less. A reader who skips
+   notation cannot skip a sentence.
+3. **Every term gets a gloss the first time, or is not used.** "EV/EBITDA (priset
+   i förhållande till rörelsevinsten)". Prefer not using it: "bolaget värderas
+   till tre gånger sin rörelsevinst, vilket är lågt" needs no gloss at all.
+   Nothing stays in English to be glossed — the call, the conviction and both
+   score names are translated outright per §13's term table, so
+   `Investeringsbetyg` and `Datasäkerhet` need no parenthetical at all.
+4. **No number without its meaning.** A ratio, a margin or a growth rate is
+   printed only alongside whether it is high or low and compared to what — the
+   company's own history, a peer, or a target. A bare `P/E 16.8` informs nobody
+   who needed the explanation.
+5. **Short sentences, one table per section, at most four columns.** If a table
+   needs five columns it belongs in the underlying material.
+6. **The reader must be able to act on the last paragraph alone.** Section 6 and
+   `Slutsats` carry the whole instruction between them.
+
+### Medium
+
+Deliver as **text in the conversation** by default. Do not build an HTML
+artifact, charts, or a rendered report unless the user asks for one — rendering
+and verifying a visual report can cost more time than the analysis itself.
 
 Build an artifact only when the user asks for a report, a document, a deck, a
 one-pager or something to share.
@@ -371,8 +502,15 @@ issuer is on and, critically, whether ESEF applies at all.
 
 ### Phase 1 — Establish the current picture
 Price with timestamp, shares outstanding, market cap, enterprise value.
-`scripts/quote.py TICKER` gives price, previous close, 52-week position and a
-two-source cross-check.
+`scripts/quote.py TICKER` gives price, previous close, the 52-week position and
+the age of the print. For a Nasdaq Nordic ticker (`.ST`, `.HE`, `.CO`, `.IC`)
+it corroborates that price against Nasdaq's own venue reference data and
+reports one of three outcomes: `CROSS-CHECKED`, `CONFLICT` — including a
+currency mismatch, which means the two sources are not pricing the same
+instrument — or `not checked`. Read which one you got. `not checked` is not a
+pass, and a price outside those suffixes is `SINGLE SOURCE`. Every multiple in
+the analysis divides by this figure, so a bad price is a bad valuation
+everywhere downstream.
 
 **Shares outstanding.** Nordics →
 `scripts/nordic_shares.py "NAME"`, which reads the exchange's own reference data
@@ -387,7 +525,7 @@ the Claude app's container, confirmed 2026-08-31 — work down this list and
 
 | Order | Source | Notes |
 |---|---|---|
-| 1 | `scripts/quote.py` | Best: two-source cross-check and staleness note |
+| 1 | `scripts/quote.py` | Best: as-of timestamp, staleness note, and a Nasdaq Nordic cross-check on a Nordic ticker |
 | 2 | `borskollen.se/aktie/<slug>` or `allaaktier.se/<slug>` | Nordic, HTML, reachable from the app — **manual lookup: no script fetches these**, look the page up by hand |
 | 3 | `aktiespararna.se/bolag/<slug>` | Nordic, HTML — **manual lookup**, last resort before `DATA NOT AVAILABLE` |
 
@@ -448,6 +586,15 @@ financial targets from its own IR pages with the source sentence attached, and
 `--history` compares them against what was delivered. Everything it returns is
 `SINGLE SOURCE — MANAGEMENT GUIDANCE`.
 
+Add `--save` and the run's extracted statements are persisted with the vintage
+they were made in, so a target is later compared against what was actually said
+then rather than against today's wording. `--stored-history` prints that record
+newest first without a live fetch, and `--revisions` prints the revision chain
+— a target quietly restated is a finding about management, and it is only
+visible if the earlier wording was kept. `--use-history` folds the stored
+material into this run's execution score and discloses that it did; it is off
+by default, so a plain run's score never changes underneath you.
+
 `scripts/corporate_actions.py "NAME"` classifies recent issues, buybacks and
 splits; `--shares` returns the share-count disclosure log, which is the
 authoritative dilution record.
@@ -501,12 +648,31 @@ microcap produces false precision.
 **Mandatory at STANDARD and DEEP.** For any ESEF filer, `scripts/verify_filing.py
 --lei <LEI> --slug <mfn-slug>` runs the checks and prints the block. Cross-check the material figures against a
 second independent path, confirm the statements tie, confirm the share count
-covers all classes, and publish the Evidence block. Name what could not
-be verified rather than letting single-sourced figures pass as equally solid.
+covers all classes, and assemble the Evidence block. It is underlying material
+(§6) — held, not printed, until the reader asks — but what it found is not:
+whatever could not be verified reaches the answer as `Unverified` on the verdict
+block and as plain words in `Viktigast`. Name it there rather than letting
+single-sourced figures pass as equally solid.
 
 A `FACT` tag records where a number came from; it does not establish that the
 number is right. This phase is what separates sourced research from verified
 research.
+
+### Phase 10 — Record the decision, seed the thesis
+→ §9, and `commands/analyze.md` for the two commands
+
+Every check this run made is now an outcome, and an outcome that stays in the
+prose is lost. Emit the decision record as JSON, render the block from it (§9),
+and — on a BUY or SELL call — write the thesis to `scripts/thesis_ledger.py`
+with the breakers taken from the trigger table Phase 8 already produced.
+
+The trigger table is not a document artefact. Its rows are numeric,
+filing-checkable thresholds because that is exactly what the ledger's breaker
+grammar takes (`references/bear-case-and-scoring.md` Part 1). Until v3.0.0 that
+table was computed and then discarded, so the ledger stayed empty and
+`portfolio_review.py`'s layer-1 breaker check had nothing to test — which is
+why a holding that was never analysed shows as ⚪ *"Ingen lagrad tes"*. This
+phase is what closes that loop.
 
 For portfolio questions → `references/portfolio.md`.
 For multi-company comparison, run COMPARE depth per company (see §4) and rank
@@ -514,14 +680,129 @@ on expected return per unit of downside.
 
 ## 9. Output contract — the decision record
 
-Section 12 closes every STANDARD and DEEP analysis in exactly this shape. It is
-the machine-comparable record: same fields, same order, every company.
+The decision record is **underlying material** (§6): produced on every run,
+printed when the reader asks to see the underlying material, and never part of
+the 800-word answer. It is the machine-comparable record — same fields, same
+order, every company — and it is the only place in this system where an English
+fixed-shape block survives untranslated.
+
+**You do not type this block. You emit the record, and the block is rendered
+from it.** Until v3.0.0 the verdict block, the signal line and this record were
+three hand-typed copies of the same numbers, described as a checksum and
+cross-checked by nothing. Three copies drift, and the drift is invisible.
+`scripts/decision_record.py` inverts the authority: one source, rendered
+output, no room for a fourth copy.
+
+### The flow — three steps, in this order
+
+**1. Emit the record as JSON.** Fields, with the closed vocabularies spelled
+out because a value outside them is refused:
 
 ```
-DECISION — SAND.ST · Sandvik AB (556000-3468) · STANDARD · 2026-08-31
+as_of             the analysis date, YYYY-MM-DD
+depth             TLDR | QUICK | COMPARE | STANDARD | DEEP | PORTFOLIO | SCREEN
+producer          analyze | quick | tldr | compare | screen | portfolio
+identity          name · ticker · org_number · lei · isin  (lei OR isin required)
+verdict           STRONG BUY | BUY | HOLD | TRIM | SELL | STRONG SELL
+conviction        VERY LOW | LOW | MEDIUM | HIGH | VERY HIGH
+price             value · currency · as_of · source · reporting_currency
+fair_value        bear · base_low · base_high · bull · currency
+scenario_weights  bear · base · bull, summing to 1
+scores            investment_score · data_confidence
+rests_on          two or three {text, basis}
+assumptions       {key, value, unit, basis, scenario, rationale} per input
+reason_codes      {code, severity, detail}, code from the closed vocabulary
+triggers          the row count of the Bevakning table
+```
+
+`expected_return`, `margin_of_safety` and the conviction caps in force are
+**computed, not authored**. State an expected return and it is checked against
+the inputs; omit it and it is filled in. Never write one the inputs do not
+produce. `scripts/decision_record.py --fixture` prints a complete valid record
+to work from.
+
+**2. Validate and render.**
+
+```
+python scripts/decision_record.py decision.json --render   # the block, verbatim
+python scripts/decision_record.py decision.json --json     # the normalised record
+```
+
+**3. Read the verdict block's numbers off the validated record.** The verdict
+block (§5) and the signal line are prose you still write, so the copying now
+runs one way only: record → verdict → signal line. A number that reaches the
+answer without passing through the record is a number nothing checked.
+
+### What it refuses, and why
+
+The record is refused rather than stored. A persisted number that disagrees
+with its own inputs is worse than no record at all.
+
+- **Arithmetic that disagrees with its inputs.** Three identities are
+  recomputed: `expected_return = Σ wᵢ(FVᵢ/P − 1)` with the base taken at its
+  midpoint, `margin_of_safety = 1 − P/FV` to base-low and to base-high, and
+  `Σ wᵢ = 1`. Tolerance is 0.15pp — enough for display rounding, nothing else.
+  This removes the weakest link in the whole pipeline: arithmetic performed in
+  prose.
+- **A conviction above the ceiling** its own depth and reason codes set. The
+  ceiling is computed from the record, not applied by hand; the ladder and the
+  full list of caps live in `references/data-quality.md` §7.
+- **A reason code outside the vocabulary.** A code invented at the call site
+  cannot be counted later, so it is not accepted.
+- **An identity with neither LEI nor ISIN.** A decision keyed on a display name
+  cannot be matched to a later outcome, and "Volvo" is two companies.
+- A verdict, conviction, depth or producer outside its list; a price with no
+  currency; a price with no as-of.
+
+Fix the record, never the check. And **never retype the block** — if the
+rendered output looks wrong, the record is wrong.
+
+### The shallow depths record the gap instead of inventing a number
+
+None of TLDR, QUICK, COMPARE or SCREEN runs the nine-category scorecard, so
+none of them carries an Investment Score (§5). Attach `DEPTH_NO_SCORECARD` to
+the record: no scorecard ran to declare the gap, so you declare it.
+
+TLDR, QUICK and SCREEN build no scenarios either, so they carry no expected
+return and no margin of safety. Omit `fair_value` and `scenario_weights`
+entirely and the module records `DEPTH_NO_SCENARIOS` and leaves both figures
+empty. COMPARE is the exception: it builds light scenarios, so its record
+carries a fair value, weights and a real expected return — it is the scorecard
+it lacks, not the scenarios.
+
+Inventing either figure to fill the shape is the failure the closed vocabulary
+exists to prevent.
+
+### Reason codes — why a number was withheld or a conviction capped
+
+Every reason code records the outcome of a check that **already ran**. Nothing
+new is computed to justify a decision: `valuation_gate.py`'s eight refusals,
+`peers_se.py`'s suppressed rows, `thesis_ledger.py`'s breaker status,
+`finfact.py`'s conflicts and single sources, `earnings_quality.py`'s accrual
+and cash-conversion bands, `venues_se.py`'s MTF and microcap routing. The gap
+was that each outcome was printed as prose and then lost, so six months later
+nobody could say why a multiple was missing or why conviction was LOW.
+
+Each code carries a severity — `BLOCK` (the number or the call cannot stand as
+stated), `WARN` (it stands, but the reader must be told) or `INFO` (recorded
+for audit, no present effect) — and the codes at BLOCK and WARN print on the
+block. A `WARN` code is not a substitute for the plain-language sentence §7
+demands: the code is for the audit, the sentence is for the reader.
+
+The vocabulary lives in `decision_record.REASON_CODES`. Read it there rather
+than guessing a name; adding a code is a code change, deliberately.
+
+### The block
+
+Rendered from the record above, and this is the shape it prints. The renderer
+owns the column positions, the number formatting and the ladder's width — read
+this as the shape, not as a template to copy.
+
+```
+DECISION — SAND.ST · Sandvik AB · (556000-3468) · STANDARD · 2026-08-31
 
 RECOMMENDATION    BUY — MEDIUM CONVICTION
-Price             SEK 356.00   (2026-08-31 07:14 UTC, Nasdaq · reports in SEK)
+Price             SEK 356   (2026-08-31 07:14 UTC, Nasdaq · reports in SEK)
 Fair value        SEK 420-470 base (55%) · 310 bear (25%) · 540 bull (20%)
 
                   310 ──────────●─────────────├══════════┤──────────────── 540
@@ -534,44 +815,95 @@ Rests on          1. Mining capex holds through 2027           ASSUMPTION
                   2. EBIT margin >= 15% through the cycle      ASSUMPTION
                   3. Multiple reverts to 10y median, not peak  ASSUMPTION
 
+Flags             WARN  GATE_TTM_INCOMPLETE
 Triggers          see Bevakning in the closing block — 5 rows
-```
 
 *This is analysis, not investment advice.*
+```
+
+Those numbers are the module's own verified fixture: price 356, base 420–470 at
+55%, bear 310 at 25%, bull 540 at 20% reproduce +20.9% expected return and
++15%/+24% margins of safety to the digit. Where the recomputed figures are not
+the ones you intended, the inputs are where to look.
 
 Rules:
 
-- **Numerically identical to the verdict.** Same recommendation, same
-  conviction, same fair-value range, same expected return, same two scores. A
-  divergence is a defect. The verdict's upside (fair value over price, minus 1)
-  and this record's margin of safety (1 minus price over fair value) are
-  different quantities that will not match to the digit — that is not a
-  divergence, provided each is labelled for what it is.
+- **The record is the source; the verdict is the copy.** Same recommendation,
+  same conviction, same fair-value range, same expected return, same two
+  scores. The verdict's upside (fair value over price, minus 1) and this
+  record's margin of safety (1 minus price over fair value) are different
+  quantities that will not match to the digit — that is not a divergence,
+  provided each is labelled for what it is.
 - **Data Confidence is never omitted.** It sits beside the Investment Score,
   not in a footnote.
-- **No point estimate on the fair-value line.** A range, always.
+- **No point estimate on the fair-value line.** A range, always — the base case
+  is a range in this system, and the weighting uses its midpoint.
 - **`Rests on` are assumptions, not triggers.** Name the two or three the call
-  actually depends on, each tagged. Triggers live in the closing block's
-  Bevakning table and are referenced here, never restated.
+  actually depends on, each with its basis, and keep each to one short line.
+  Triggers live in the closing block's Bevakning table and are referenced here
+  by row count, never restated.
+- **Every assumption gets a rationale.** One without it cannot be challenged
+  later, which is the only reason to store it.
 - The recommendation follows from valuation, expected return, downside, margin
   of safety, business quality, balance sheet and data confidence together —
-  never from the Investment Score alone. Where your judgement departs from what
-  the numbers suggest, say so and give the reason.
+  never from the Investment Score alone, and never from a composite score,
+  which this system deliberately does not have. Where your judgement departs
+  from what the numbers suggest, say so and give the reason.
+
+### Storing the decision, and seeding the thesis
+
+A record that is validated and then discarded leaves the system exactly where
+v2.6 was: an excellent analysis, forgotten. On a BUY or SELL call at STANDARD
+or DEEP depth, write the thesis first and the decision second:
+
+```
+python scripts/thesis_ledger.py "NAME" --add "<falsifiable sentence>" \
+    --metric <metric_id> --breaker "<row from the Bevakning table>"
+python scripts/thesis_ledger.py "NAME" --decide decision.json
+```
+
+`--decide` re-validates through `decision_record.py` and stores nothing if the
+record is refused. Both live in the same per-issuer file, under separate keys,
+and both are append-only: `--decisions` reads them back newest first,
+`--decision-latest` gives the call that currently stands, and `--supersede`
+retires one without deleting it. `commands/analyze.md` carries the full
+sequence and the cases where you record nothing.
+
+Read the distinction that governs the design before writing either:
+
+**A thesis is price-free and durable. A decision is price-stamped and
+superseded.** The ledger stores no prices at all, on purpose —
+`thesis_ledger.py` puts it plainly: *"a thesis that flips on a quote is a
+trade, not a thesis."* The thesis holds the falsifiable claim and its numeric
+breakers, and it survives every re-run. The decision holds the price, the fair
+value and the call as of one moment, and the next decision supersedes it.
+Never put a price into a thesis.
+
+**On a company already in the ledger, lead with what changed.**
+`scripts/research_delta.py "NAME"` diffs the new record against the stored one
+and prints only what moved — the call, the conviction, the price, the fair
+value, the reason codes. On results day that is the whole answer the reader
+wants, and it costs nothing to produce because both records already exist.
+`scripts/calibration.py` reports how earlier calls actually turned out; it is
+forward-only and read-only, so it never adjusts a score, a cap or a threshold,
+and it prints `INSUFFICIENT SAMPLE` rather than a hit rate on a handful of
+decisions.
 
 ### The signal line — every depth closes with it
 
 Whatever came before, the last thing a run prints is the call in a form that
-survives skimming. At STANDARD and DEEP it follows the decision record; at
-TLDR, QUICK, COMPARE and PORTFOLIO it is the close on its own.
+survives skimming. At every depth it is the close — the decision record does
+not precede it, since that record is underlying material (§6).
 
 ```
 ## Slutsats
 
-🟢 **NIBE B — BUY (köp)** · MEDIUM CONVICTION
+🟢 **NIBE B — KÖP** · MEDEL ÖVERTYGELSE
 Marginalen har vänt och värderingen ligger under bolagets egen tioårshistorik.
 
-Viktigast: Data Confidence 61/100. EV/EBIT går inte att beräkna eftersom
-delårsrapporterna inte redovisar EBIT. Detta är en riktning, inte ett facit.
+Viktigast: Datasäkerhet 61/100. Ett av de centrala värderingstalen går inte att
+räkna fram, eftersom delårsrapporterna inte redovisar rörelseresultatet. Detta
+är en riktning, inte ett facit.
 ```
 
 At STANDARD and DEEP on a single company the signal line opens a fuller close.
@@ -588,8 +920,8 @@ Aktien är samtidigt högt värderad och marknaden räknar med starkare tillväx
 bolagets eget mål. I november kan omkring 116 miljoner nya aktier emitteras till
 högst 0,18 kr, vilket ger både utspädning och säljtryck.
 
-🔴 **Obducat B — SELL (sälj/minska)** · LOW CONVICTION
-SEK 0,546 nu · rimligt värde 0,38-0,48 · Score 41/100 · Data Confidence 38/100
+🔴 **Obducat B — SÄLJ** · LÅG ÖVERTYGELSE
+SEK 0,546 nu · rimligt värde 0,38-0,48 · Investeringsbetyg 41/100 · Datasäkerhet 38/100
 
 **Talar för**
 🟢 Orderstock 147 MSEK, klart över historiken
@@ -605,17 +937,21 @@ SEK 0,546 nu · rimligt värde 0,38-0,48 · Score 41/100 · Data Confidence 38/1
 
 | # | Utlösare | Tröskel | Följd |
 |---|---|---|---|
-| 1 | Q3-intäkter | < 30 MSEK | tesen bryts -> EXIT |
+| 1 | Q3-intäkter | < 30 MSEK | tesen bryts -> SÄLJ HELT |
 | 2 | Nyemission | > 75 MSEK under 0,45 kr | bear-caset |
-| 3 | Kurs | > 0,80 kr | bull-värdering -> exit |
+| 3 | Kurs | > 0,80 kr | bull-värdering -> sälj |
 
 **Äger du den redan:** trimma nu, låt Q3 och novemberoptionerna avgöra resten.
 
 **Horisont:** till Q3 den 13 november. Då avgörs om intäktstakten håller, och
 novemberoptionerna visar om utspädningen blir så stor som marknaden fruktar.
+Datumet kommer från Avanzas kalender och är inte bekräftat mot bolaget.
 
-Viktigast: Data Confidence 38/100. Bolaget är en MTF-notering utan ESEF, så
-siffrorna är lästa ur delårsrapportens prosa. Detta är en riktning, inte ett facit.
+Viktigast: Datasäkerhet 38/100. Bolaget handlas på en mindre marknadsplats som
+inte kräver strukturerade siffror, så alla tal är lästa ur rapporttexten. Detta
+är en riktning, inte ett facit.
+
+Vill du se underlaget — siffror, värdering, källor och Evidence-block — säg **visa underlaget**.
 ```
 
 Four rules govern the added blocks:
@@ -637,12 +973,16 @@ Four rules govern the added blocks:
   the whole position before close". Name what to do now and what to wait for.
   This is the one line that turns an opinion into something actionable, and it
   is the bridge between `/analyze` and `/portfolio`.
-- **A `Horisont` date sourced from `horizon.py` carries its provenance inline.**
-  Write `[SINGLE SOURCE - tier 4, Avanza; overifierat mot bolaget]` on the same
-  line as the date. The script prints this automatically in its own output, but
-  the analyst composes the Swedish `Horisont` line by hand — and a disclosure
-  that survives only in the tool's output is a disclosure that gets dropped in
-  translation. A date whose tier is not recorded cannot be audited later.
+- **A `Horisont` date sourced from `horizon.py` carries its provenance in
+  words, in the same sentence or the one after.** Write "Datumet kommer från
+  Avanzas kalender och är inte bekräftat mot bolaget" — never the bracketed
+  `[SINGLE SOURCE - tier 4, ...]` form, which is notation and belongs to the
+  Evidence block. The disclosure is mandatory; only its shape changed. The
+  script prints the tier in its own output, but the analyst composes the
+  `Horisont` line by hand, and a disclosure that survives only in the tool's
+  output is one that gets dropped in translation. Name the source and say
+  whether the company confirmed it; the tier number itself is Evidence-block
+  material and adds nothing for this reader.
 - **`Horisont` is mandatory at STANDARD and DEEP**, directly beneath `Äger du
   den redan` (or in its place when that line does not apply). It is derived
   from the trigger table already printed as `Bevakning` — not invented — and
@@ -660,13 +1000,13 @@ Four rules govern the added blocks:
 
 One colour vocabulary, used by every command:
 
-| | One company | One holding in a portfolio |
-|---|---|---|
-| 🟢 | STRONG BUY, BUY | ADD |
-| 🟡 | HOLD | HOLD |
-| 🟠 | SELL | TRIM |
-| 🔴 | STRONG SELL | EXIT |
-| ⚪ | no call — the evidence does not support one | flagged, no action yet |
+| | One company | One holding in a portfolio | English equivalent |
+|---|---|---|---|
+| 🟢 | STARKT KÖP, KÖP | ÖKA | STRONG BUY, BUY / ADD |
+| 🟡 | BEHÅLL | BEHÅLL | HOLD / HOLD |
+| 🟠 | SÄLJ | MINSKA | SELL / TRIM |
+| 🔴 | STARKT SÄLJ | SÄLJ HELT | STRONG SELL / EXIT |
+| ⚪ | inget kall — underlaget räcker inte | flaggad, ingen åtgärd än | no call / flagged |
 
 Rules:
 
@@ -676,13 +1016,15 @@ Rules:
   in the output, and never in this plugin's own documentation.
 - **⚪ is mandatory when it applies.** A run that could not reach a call says so
   in the same place a call would have gone. Omitting the line, or downgrading
-  the uncertainty to HOLD, is the failure the whole framework exists to
-  prevent — HOLD is a judgement, ⚪ is the absence of one.
+  the uncertainty to BEHÅLL, is the failure the whole framework exists to
+  prevent — BEHÅLL is a judgement, ⚪ is the absence of one.
 - **A multi-name run groups instead of repeating**, one line, ordered by
   conviction in the call:
-  `🟢 KÖP: NIBE · 🟡 HOLD: Axfood, Betsson · 🟠 SÄLJ: Kambi · ⚪ FLAGGAD: Sagax D`
-- **The token stays English, the gloss is Swedish** — `BUY (köp)`, per §13. The
-  parenthetical is for the reader; the token is what makes runs comparable.
+  `🟢 KÖP: NIBE · 🟡 BEHÅLL: Axfood, Betsson · 🟠 SÄLJ: Kambi · ⚪ FLAGGAD: Sagax D`
+- **The call is written in the reader's language, with no English alongside it**
+  — `KÖP`, not `BUY (köp)` and not `KÖP (BUY)`, per §13. Comparability across
+  companies is carried by the decision record in the underlying material, which
+  keeps the English token; the answer does not have to carry it twice.
 - **One sentence of plain language under the flag.** No tags, no jargon a
   non-specialist would have to look up. Someone who reads only the signal line
   must come away with the right instruction.
@@ -691,9 +1033,9 @@ Rules:
   that could not be checked, and the one thing most likely to change the
   conclusion. A caveat that would be true of every run informs about none of
   them.
-- **Numerically identical to the verdict block and the decision record** on the
-  call, the conviction and Data Confidence. It is the third face of the same
-  checksum, not a fourth opinion.
+- **The call, the conviction and Data Confidence are copied from the decision
+  record**, like the verdict block's (§5). It is the same source read a third
+  time, not a third opinion.
 
 
 ## 10. Working without the scripts
@@ -723,46 +1065,146 @@ identical; only the retrieval mechanism changes.
 
 ## 12. Scripts
 
+**Identity, venue and the issuer's own material**
+
 | Script | Purpose |
 |---|---|
-| `scripts/esef_fundamentals.py` | Nordic and French fundamentals from ESEF Inline XBRL |
-| `scripts/verify_filing.py` | Restatement check, internal ties, release cross-check |
-| `scripts/short_se.py` | Swedish disclosed short interest from Finansinspektionen |
-| `scripts/nordic_shares.py` | Shares outstanding per class and market cap, from Nasdaq |
-| `scripts/ownership_se.py` | Swedish institutional ownership from FI fund holdings |
-| `scripts/cision_news.py` | Releases for Swedish issuers that publish via Cision, not MFN |
 | `scripts/company_resolve.py` | **Phase 0.** Canonical identity; refuses to resolve an ambiguous name |
 | `scripts/venues_se.py` | Which Swedish venue an issuer is on, and the source chain that follows |
 | `scripts/ir_discovery.py` | The issuer's own IR site, verified — reports, targets, calendar |
+| `scripts/mfn_news.py` | Swedish regulatory releases and report PDFs from MFN.se |
+| `scripts/cision_news.py` | Releases for Swedish issuers that publish via Cision, not MFN |
+
+**Prices, shares and fundamentals**
+
+| Script | Purpose |
+|---|---|
+| `scripts/quote.py` | Price with as-of timestamp and staleness note; cross-checked against Nasdaq Nordic reference data on a Nordic ticker, `not checked` elsewhere |
+| `scripts/nordic_shares.py` | Shares outstanding per class and market cap, from Nasdaq; daily bars back-adjusted for splits, dividend treatment unverified |
+| `scripts/share_semantics.py` | Resolves which of six competing "shares outstanding" figures applies, and flags unlisted classes |
+| `scripts/esef_fundamentals.py` | Nordic and French fundamentals from ESEF Inline XBRL |
+| `scripts/ttm_engine.py` | Assembles trailing twelve months from interim reports, since ESEF carries annual figures only |
 | `scripts/corporate_actions.py` | Splits, issues, buybacks, and the share-count disclosure log |
-| `scripts/guidance_track.py` | Standing financial targets and the delivery record against them |
+
+**Gates and checks — the parts that refuse**
+
+| Script | Purpose |
+|---|---|
+| `scripts/valuation_gate.py` | Refuses to print a multiple when price and earnings do not share a compatible period |
+| `scripts/verify_filing.py` | Restatement check, internal ties, release cross-check |
+| `scripts/earnings_quality.py` | Cash-conversion and accrual ratios that separate reported profit from actual cash |
+| `scripts/decision_record.py` | **§9.** The decision's schema, its arithmetic identities, the enforced conviction ceiling, and the renderer for the fixed-shape block. Refuses a record that disagrees with its own inputs |
+
+**Ownership, insiders, guidance, macro**
+
+| Script | Purpose |
+|---|---|
+| `scripts/insider_se.py` | Swedish PDMR insider transactions from Finansinspektionen |
+| `scripts/short_se.py` | Swedish disclosed short interest from Finansinspektionen |
+| `scripts/ownership_se.py` | Swedish institutional ownership from FI fund holdings |
+| `scripts/guidance_track.py` | Standing financial targets and the delivery record against them; persists each extracted statement with the vintage it was made in, so a target is compared against what was said then |
 | `scripts/peers_se.py` | Scored peer set by business archetype, not ICB sector |
 | `scripts/macro_se.py` | DCF inputs from Riksbanken; official SCB industry benchmarks |
-| `scripts/quote.py` | Price with as-of timestamp, staleness note, two-source cross-check |
-| `scripts/insider_se.py` | Swedish PDMR insider transactions from Finansinspektionen |
-| `scripts/mfn_news.py` | Swedish regulatory releases and report PDFs from MFN.se |
-| `scripts/finfact.py` | Provenance and temporal-validity core the other scripts import — not run directly (`--selftest` only) |
-| `scripts/share_semantics.py` | Resolves which of six competing "shares outstanding" figures applies, and flags unlisted classes |
-| `scripts/ttm_engine.py` | Assembles trailing twelve months from interim reports, since ESEF carries annual figures only |
-| `scripts/valuation_gate.py` | Refuses to print a multiple when price and earnings do not share a compatible period |
-| `scripts/earnings_quality.py` | Cash-conversion and accrual ratios that separate reported profit from actual cash |
-| `scripts/thesis_ledger.py` | Persistent, falsifiable thesis keyed on LEI, re-testable against a later filing |
+| `scripts/horizon.py` | The next scheduled report date for a Nordic-listed issuer, with its source named |
+
+**Screening**
+
+| Script | Purpose |
+|---|---|
+| `scripts/screen_value.py` | **`/screen`.** The on-demand deep-value screen over the whole listed universe: universe → multi-year history → value filter → liquidity floor → size band → corporate actions → ESEF margins → rank, printing what each stage cut and why |
+| `scripts/screen_digest.py` | The unattended daily fell-and-might-be-cheap digest, wall-clock bounded. Run by the scheduled job, not by a command |
+| `scripts/screen_metrics.py` | Drawdown, return windows and margin trends as pure functions — no network |
+| `scripts/market_universe.py` | The shared universe, liquidity, size and returns layer both screens build on: Nasdaq snapshot plus FIRDS → issuers grouped by LEI → per-class market cap and history → tradeable primary line → SEK-equivalent liquidity floor |
+
+**Decisions, theses and portfolios**
+
+| Script | Purpose |
+|---|---|
+| `scripts/thesis_ledger.py` | Both persisted objects, keyed on LEI: the falsifiable, price-free thesis with its numeric breakers (`--add`, `--evaluate`), and the price-stamped decision record (`--decide`, `--decisions`, `--decision-latest`, `--supersede`). Append-only; nothing is rewritten or dropped |
+| `scripts/watchlist_store.py` | Issuers followed but not owned — stored and listed, with identity resolved the same way and an ambiguous name refused. No quantity, no cost basis, and it never values or scores |
 | `scripts/portfolio_store.py` | Store and manage a portfolio at `~/.investment-analyst/portfolio/<name>.json`; accepts pasted Avanza/Nordnet text or typed positions; resolves identity and refuses ambiguous names |
 | `scripts/portfolio_review.py` | The three-layer triage: layer 1 breakers via thesis_ledger, layer 2 alerts, layer 3 STANDARD depth on flagged holdings; returns EXIT, TRIM or HOLD per position, or leaves the action open for depth review |
 | `scripts/portfolio_metrics.py` | Portfolio-level analysis: Herfindahl concentration, effective position count, sector and geographic exposure, correlation and hidden overlap, downside risk, Data Confidence, cash drag |
+| `scripts/research_delta.py` | What changed since last time: diffs a new decision record against the stored one and prints only what moved — the call, the conviction, the price, the fair value, the reason codes |
+| `scripts/calibration.py` | Forward-only outcome and calibration reporting on stored decisions. **Not a backtester**, deliberately: it attaches a realised outcome at 3, 6 and 12 months to decisions made from v3.0.0 on, prints `INSUFFICIENT SAMPLE` rather than a hit rate below its minimum, and feeds nothing back into a score, a cap or a threshold |
+
+**Shared core — imported, not run**
+
+| Script | Purpose |
+|---|---|
+| `scripts/finfact.py` | Provenance and temporal-validity core every fetching script imports (`--selftest` only) |
+| `scripts/numparse.py` | The one number parser: comma-versus-decimal, space grouping, the typographic minus |
+| `scripts/finmath.py` | Shared financial math — CAGR from elapsed days rather than a period count, with a currency check |
+| `scripts/http_util.py` | One fetcher: retry with backoff on 429 and 5xx, and a collision-free cache key |
+| `scripts/_bootstrap.py` | The sibling-import idiom, written once and correctly |
 
 Read the warnings the scripts print — they are not decoration. A currency
 warning, a stock-split warning, a truncation warning or a multi-tag warning each
 means a specific number in the table cannot be used the way it looks.
 
+**One adjustment rule, because getting it backwards is silent.** The daily
+closes from `nordic_shares.py` are already back-adjusted for splits — measured
+against four dated splits in both directions, with no discontinuity at any
+effective date — so a return, a drawdown or a percentile against the company's
+own history is correct off those closes as they stand. Never apply
+`corporate_actions.split_adjustment_factor()` to a price or a price ratio; that
+factor exists for a **per-share fundamental** — EPS, dividend per share, book
+value per share — which comes from a filing and is never restated for a split.
+Applied to a price it double-adjusts it. Dividends are a separate matter: their
+treatment in the series is unverified, so it carries a price range, never a
+total return.
+
 ## 13. Output language
 
-Answer in the language the user wrote in. For a Swedish question, write the
-analysis in Swedish but keep the standard financial terms and the final
-decision record in English — `RECOMMENDATION    BUY — MEDIUM CONVICTION`,
-`Margin of safety`,
-`FACT`/`ESTIMATE`/`ASSUMPTION`/`OPINION` — so the output stays comparable across
-companies and matches how the terms appear in the sources.
+Answer in the language the user wrote in. **For a Swedish question, every word
+of the answer is Swedish** — the seven sections of §6, the verdict header's own
+field names, the call, the conviction, the scores, the trigger table, all of
+it. No English fragments, no glossed English tokens, no `BUY (köp)`.
+
+The term table, which is fixed — never improvise a synonym:
+
+| English | Svenska |
+|---|---|
+| `VERDICT` | `OMDÖME` |
+| `STRONG BUY` / `BUY` | `STARKT KÖP` / `KÖP` |
+| `HOLD` | `BEHÅLL` |
+| `SELL` / `STRONG SELL` | `SÄLJ` / `STARKT SÄLJ` |
+| `ADD` / `TRIM` / `EXIT` (portfolio) | `ÖKA` / `MINSKA` / `SÄLJ HELT` |
+| `LOW` / `MEDIUM` / `HIGH CONVICTION` | `LÅG` / `MEDEL` / `HÖG ÖVERTYGELSE` |
+| `Investment Score` | `Investeringsbetyg` |
+| `Data Confidence` | `Datasäkerhet` |
+| `Why · Risk · Priced in · Watch · Unverified` | `Varför · Risk · Inprisat · Bevaka · Overifierat` |
+| `fair value` · `expected return` · `now` | `rimligt värde` · `förv. avkastning` · `nu` |
+| `base` (scenario) — `bear` and `bull` stay | `bas` |
+| `DATA NOT AVAILABLE` | `gick inte att få fram` |
+
+**Two things stay English, and only these:**
+
+1. **The fixed-shape blocks in the underlying material** — the decision record
+   and the Evidence block (§6, §9). They keep their English field names, their
+   `FACT`/`ESTIMATE`/`ASSUMPTION`/`OPINION` tags and their status groups,
+   because they are the machine-comparable record across companies and
+   languages. They are printed only on request, so they never intrude on a
+   Swedish answer. The decision block is rendered by `decision_record.py`:
+   print it as it comes out. Translating a rendered block would break the
+   comparability it exists for, and the vocabularies it validates against are
+   English tokens.
+2. **The depth tokens** — `TLDR`, `QUICK`, `COMPARE`, `STANDARD`, `DEEP`,
+   `PORTFOLIO`. They name the commands the user types and renaming them would
+   break that mapping. They appear on the identity line only.
+
+**The scripts return English tokens; you translate them.**
+`portfolio_review.py` returns `EXIT`, `TRIM` and `HOLD`, `insider_se.py`
+classifies trades as `BUY`/`SELL`/`OTHER`, and `thesis_ledger.py` stores the
+call in English. That is deliberate — the stored record must survive across
+languages and re-tests. Copying such a token straight into a Swedish answer is
+the most likely way this rule gets broken, because the token arrives already
+formatted and looks finished. It is not: `EXIT` from the script is `SÄLJ HELT`
+in the answer.
+
+Everything else translates. If a term is not in the table and has no natural
+Swedish form, write the plain-language description instead of importing the
+English word — that is what §7 rule 3 asks for anyway.
 
 ## 14. The Swedish default run
 
@@ -787,13 +1229,18 @@ either produces a dated, sourced figure or a stated gap — never a silent one.
 | 14 | Verification: restatements, ties, cross-checks | `verify_filing.py` |
 | 15 | Red-flag screen | `references/red-flags-and-smallcap.md` |
 | 16 | Valuation, reverse DCF, scenarios, scorecard, recommendation | — |
+| 17 | Emit and validate the decision record; on a BUY or SELL, seed the thesis | `decision_record.py`, `thesis_ledger.py` |
 
-QUICK runs 1, 2, 4, 5, 8, 9 and the recommendation. COMPARE runs the same
-steps plus the moat assessment and a light bear/base/bull scenario build —
+QUICK runs 1, 2, 4, 5, 8, 9, the recommendation and step 17. COMPARE runs the
+same steps plus the moat assessment and a light bear/base/bull scenario build —
 neither has its own numbered step in this table, since this list is the
 Swedish data-gathering sequence, not the analysis phases. STANDARD adds 3, 6,
 10, 12, 14, 15, and step 16 without the reverse DCF. DEEP adds 7, 11, 13 and
 the reverse DCF.
+
+Step 17 runs at every depth, in the depth-appropriate form: a QUICK or TLDR
+record carries no scenarios and no scorecard and says so with a reason code
+(§9), and only a BUY or SELL at STANDARD or DEEP seeds a thesis.
 
 Two things are never skipped at any depth: **step 1**, because analysing the
 wrong entity fast is worse than analysing the right one slowly, and **the honest

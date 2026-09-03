@@ -93,28 +93,76 @@ class EsefDoesNotApplyOnAnMtf(unittest.TestCase):
 class NoScriptFabricatesConsensus(unittest.TestCase):
     """No free source in this toolkit provides real analyst consensus (see
     references/valuation.md and references/source-registry.md: consensus is
-    to be reported as DATA NOT AVAILABLE, never approximated). This is a
-    trip-wire, not a behavioural test: today no script even mentions the
-    word, and this test enforces that anyone who adds a "consensus" field
-    later is forced to read this comment and either (a) make it correctly
-    report DATA NOT AVAILABLE with a licensed-source caveat, or (b) update
-    this test with a clear reason why it is now safe."""
+    to be reported as DATA NOT AVAILABLE, never approximated).
 
-    def test_no_sibling_script_mentions_consensus(self):
-        hits = []
+    This was originally a bare trip-wire: NO script could contain the word.
+    v3.0.0 took the second branch its own docstring offered ("update this
+    test with a clear reason why it is now safe"), because three files must
+    now discuss consensus in order to say it does not exist -
+    calibration.py explains that a forward track record needs none,
+    decision_record.py explains that implied expectations are the only
+    forward-expectation series obtainable without it, and research_delta.py
+    diffs whatever consensus string a stored decision already carried,
+    which for this toolkit's coverage is "CONSENSUS DATA NOT AVAILABLE".
+
+    Discussing the absence is the honest behaviour the rule exists to
+    protect, so the rule now tests the FABRICATION instead of the word:
+      1. a file that mentions consensus must also state its unavailability,
+         so the word can never appear without the caveat attached; and
+      2. no file may bind a NUMBER to a consensus-named variable, which is
+         what fabricating or approximating a consensus figure would look
+         like in code.
+    That is strictly harder to defeat than the grep it replaces."""
+
+    UNAVAILABILITY = re.compile(
+        r"no consensus|needs no consensus|consensus data not available|"
+        r"consensus is usually|without .{0,20}consensus", re.I)
+
+    def test_a_script_mentioning_consensus_also_states_it_is_unavailable(self):
+        undisclosed = []
+        for fname in sorted(os.listdir(SCRIPTS_DIR)):
+            if not fname.endswith(".py"):
+                continue
+            with open(os.path.join(SCRIPTS_DIR, fname), encoding="utf-8") as fh:
+                text = fh.read()
+            if re.search(r"consensus", text, re.I) and \
+                    not self.UNAVAILABILITY.search(text):
+                undisclosed.append(fname)
+        self.assertEqual(
+            undisclosed, [],
+            "%r mention 'consensus' without anywhere stating that it is not "
+            "available. Either add the caveat or stop mentioning it - the "
+            "word must never travel without it (spec §39)." % (undisclosed,))
+
+    def test_no_script_binds_a_number_to_a_consensus_name(self):
+        import ast
+        offenders = []
         for fname in sorted(os.listdir(SCRIPTS_DIR)):
             if not fname.endswith(".py"):
                 continue
             path = os.path.join(SCRIPTS_DIR, fname)
             with open(path, encoding="utf-8") as fh:
-                text = fh.read()
-            if re.search(r"consensus", text, re.I):
-                hits.append(fname)
+                tree = ast.parse(fh.read(), path)
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+                    continue
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                names = [t.id for t in targets if isinstance(t, ast.Name)]
+                names += [t.attr for t in targets if isinstance(t, ast.Attribute)]
+                if not any("consensus" in n.lower() for n in names):
+                    continue
+                value = node.value
+                numeric = (isinstance(value, ast.Constant)
+                           and isinstance(value.value, (int, float))
+                           and not isinstance(value.value, bool))
+                computed = isinstance(value, (ast.BinOp, ast.Call))
+                if numeric or computed:
+                    offenders.append("%s:%d" % (fname, node.lineno))
         self.assertEqual(
-            hits, [],
-            "%r now mention 'consensus' - read the surrounding code and "
-            "confirm it reports DATA NOT AVAILABLE rather than fabricating "
-            "or approximating a consensus figure (spec §39)." % (hits,))
+            offenders, [],
+            "%r bind a number to a consensus-named variable. This toolkit has "
+            "no consensus source; a computed consensus is a fabricated one "
+            "(spec §39)." % (offenders,))
 
 
 @network

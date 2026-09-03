@@ -179,34 +179,33 @@ def parse_tags(note):
 def fetch_price(symbol):
     """Current price for one symbol, or None. Never raises.
 
-    Tries Yahoo first, then Nasdaq's API (US symbols only) -- the same order
-    `quote.py`'s own report() uses. Returns a plain dict, not a FinancialFact:
+    Reads Yahoo only, via `quote.py`'s `from_yahoo()` -- Yahoo is
+    `quote.py`'s sole price fetch now. This used to also try
+    `q.from_nasdaq(...)` as a US-symbol fallback, but quote.py has never
+    defined a `from_nasdaq` function since the Nasdaq (api.nasdaq.com)
+    US-listings lookup was removed from it (see quote.py's own module
+    docstring) - every one of those calls raised AttributeError, silently
+    swallowed by the `except (Exception, SystemExit)` below it, so `n` was
+    always None and the branch was permanently dead code. Removed rather
+    than fixed forward: this toolkit's scope is European (Nordic/French)
+    venues (quote.py's own docstring again), so a US-symbol fallback has no
+    real use here to restore. Returns a plain dict, not a FinancialFact:
     callers that need provenance build the fact themselves (see
     `price_fact()`), because a bare price is also useful on its own for the
     market-value arithmetic.
     """
     q = quote_mod()
-    y = n = None
     try:
         y = q.from_yahoo(symbol)
     except (Exception, SystemExit):  # siblings raise SystemExit, not an Exception
         y = None
-    try:
-        n = q.from_nasdaq(symbol.replace("-", ".")) if "." not in symbol else None
-    except (Exception, SystemExit):  # siblings raise SystemExit, not an Exception
-        n = None
 
-    primary = y or n
-    if not primary or primary.get("price") is None:
+    if not y or y.get("price") is None:
         return None
 
-    if y and y.get("price") is not None:
-        return {"price": y["price"], "currency": y.get("currency"),
-                "source_key": "yahoo", "source_label": y.get("source"),
-                "as_of": (y.get("as_of_utc") or "")[:10] or None}
-    return {"price": n["price"], "currency": n.get("currency") or "USD",
-            "source_key": "nasdaq_cns", "source_label": n.get("source"),
-            "as_of": None}
+    return {"price": y["price"], "currency": y.get("currency"),
+            "source_key": "yahoo", "source_label": y.get("source"),
+            "as_of": (y.get("as_of_utc") or "")[:10] or None}
 
 
 def price_fact(price_info):
@@ -594,6 +593,151 @@ def build(portfolio, as_of=None, foreign_threshold_pct=20.0):
     result["foreign_flag"] = _foreign_flag(holdings, cash_ccy, cash_weight, ccy,
                                            foreign_threshold_pct)
     return result
+
+
+# ==========================================================================
+# Portfolio fit for a single-name decision (references/portfolio.md's
+# "Comparative ranking" section names PORTFOLIO FIT as a ranking input - "the
+# best standalone idea may be the worst addition if it doubles an existing
+# exposure" - but nothing in this codebase computed it before this function).
+# ==========================================================================
+
+def _same_issuer(a, b):
+    """True if dicts `a` and `b` identify the same issuer, checked in the
+    same "most specific field wins" order every other identity match in this
+    skill uses: LEI, then ISIN, then symbol/ticker, then name. Unlike a
+    single merged key (portfolio_store.py's `lei or isin or name.lower()`),
+    this compares EVERY field pair both sides actually carry rather than
+    picking one dominant field per side first: a decision_record.py identity
+    and a portfolio_store.py holding do not share one fixed key set (a
+    decision has no `symbol`; a holding has no `ticker`), so requiring one
+    combined key computed independently on each side would silently never
+    match two records that in fact name the same company. A field is
+    compared only when BOTH sides have a non-empty value for it, and the
+    first comparable field wins - so a LEI match is never overridden by a
+    coincidental name collision, and a record with no LEI at all still
+    matches on ISIN, symbol or name rather than failing outright."""
+    def norm(v):
+        return (v or "").strip().upper()
+    a_lei, b_lei = norm(a.get("lei")), norm(b.get("lei"))
+    if a_lei and b_lei:
+        return a_lei == b_lei
+    a_isin, b_isin = norm(a.get("isin")), norm(b.get("isin"))
+    if a_isin and b_isin:
+        return a_isin == b_isin
+    a_sym = norm(a.get("symbol")) or norm(a.get("ticker"))
+    b_sym = norm(b.get("symbol")) or norm(b.get("ticker"))
+    if a_sym and b_sym:
+        return a_sym == b_sym
+    a_name = (a.get("name") or "").strip().lower()
+    b_name = (b.get("name") or "").strip().lower()
+    return bool(a_name) and a_name == b_name
+
+
+def portfolio_context(identity, candidate_sector=None, candidate_driver=None,
+                      portfolio_name="default"):
+    """Read-only "portfolio fit" for one issuer under consideration.
+
+    `identity` is a plain dict shaped like decision_record.py's own
+    `identity` field ({"name", "ticker", "lei", "isin", ...} - only
+    lei/isin/symbol/ticker/name are read, and none are required). Match
+    against the stored portfolio (and, when priced, against build()'s own
+    weights/sector/driver) goes through _same_issuer() above.
+
+    `candidate_sector`/`candidate_driver` are the CALLER's own read of the
+    candidate's sector/driver tag - needed because a name NOT already held
+    has no entry in the portfolio store for this function to read a sector
+    off of. When the identity IS already held and build() could tag its
+    sector/driver, that stored tag wins over a caller-supplied guess; the
+    caller's value is only the fallback for a name not on file at all.
+
+    Returns a plain dict, NEVER raises, and NEVER writes anything - it calls
+    portfolio_store.load() (read-only) and this module's own build() (also
+    never touches the stored file):
+
+      {"status": "NO_PORTFOLIO_ON_FILE", "reason": "..."}
+          no portfolio named `portfolio_name` has ever been saved, or it has
+          no holdings. A valid, common state (this may be the user's first
+          ever holding) - not an error.
+
+      {"status": "OK", "already_held": bool, "held_as": {...}|None,
+       "current_weight_pct": float|None, "sector": str|None,
+       "driver": str|None, "shares_sector_with": [...],
+       "shares_driver_with": [...], "context_note": str|None}
+          current_weight_pct is None when the issuer is not held, or when
+          build() could not price the holding it matched (that holding is
+          then in build()'s own `unresolved` list - context_note says so
+          rather than a bare None being read as "zero weight"). A network
+          failure inside build() degrades exactly the way build() itself
+          degrades (a holding with no price becomes "unresolved" there,
+          never an exception here) - this function only adds its own
+          try/except as a second line of defence, for a failure mode
+          entirely outside build()'s own documented degradation (e.g.
+          portfolio_store.py itself becoming unimportable mid-run).
+    """
+    identity = identity or {}
+    store = portfolio_store_mod()
+    portfolio = store.load(portfolio_name)
+    raw_holdings = (portfolio or {}).get("holdings") or []
+    if not portfolio or not raw_holdings:
+        return {"status": "NO_PORTFOLIO_ON_FILE",
+               "reason": "no portfolio named %r on file (or it has no "
+                         "holdings) - nothing to compare against"
+                         % portfolio_name}
+
+    held = next((h for h in raw_holdings if _same_issuer(identity, h)), None)
+
+    try:
+        priced = build(portfolio, as_of=None)
+    except (Exception, SystemExit) as exc:  # siblings raise SystemExit, not an Exception
+        return {"status": "OK", "already_held": held is not None,
+               "held_as": {"name": held.get("name"), "symbol": held.get("symbol"),
+                           "quantity": held.get("quantity")} if held else None,
+               "current_weight_pct": None, "sector": candidate_sector,
+               "driver": candidate_driver, "shares_sector_with": [],
+               "shares_driver_with": [],
+               "context_note": ("held/not-held is known from the stored "
+                                "portfolio, but weight and overlap could not "
+                                "be computed: %s" % exc)}
+
+    all_entries = list(priced.get("holdings") or []) + list(priced.get("unresolved") or [])
+    self_entry = next((e for e in all_entries if _same_issuer(identity, e)), None)
+    if self_entry is None and held is not None:
+        # Held per the raw store, but not found by the CALLER's identity
+        # among build()'s output rows (build() does not carry lei/isin
+        # forward on every row) - retry the match using the raw holding's
+        # own fields, which build()'s rows are derived from directly.
+        self_entry = next((e for e in all_entries if _same_issuer(held, e)), None)
+
+    weight_pct = None
+    if self_entry is not None and self_entry.get("weight") is not None:
+        weight_pct = self_entry["weight"] * 100.0
+
+    sector = (self_entry or {}).get("sector") or candidate_sector
+    driver = (self_entry or {}).get("driver") or candidate_driver
+
+    shares_sector, shares_driver = [], []
+    for e in all_entries:
+        if e is self_entry:
+            continue
+        label = e.get("name") or e.get("label")
+        if sector and e.get("sector") == sector:
+            shares_sector.append({"name": label, "sector": e.get("sector")})
+        if driver and e.get("driver") == driver:
+            shares_driver.append({"name": label, "driver": e.get("driver")})
+
+    context_note = priced.get("weights_note")
+    if held is not None and self_entry is None:
+        context_note = ("held per the stored portfolio, but not found among "
+                        "build()'s priced/unresolved rows - weight and "
+                        "overlap could not be determined")
+
+    return {"status": "OK", "already_held": held is not None,
+           "held_as": {"name": held.get("name"), "symbol": held.get("symbol"),
+                       "quantity": held.get("quantity")} if held else None,
+           "current_weight_pct": weight_pct, "sector": sector, "driver": driver,
+           "shares_sector_with": shares_sector,
+           "shares_driver_with": shares_driver, "context_note": context_note}
 
 
 def _overlap(holdings):

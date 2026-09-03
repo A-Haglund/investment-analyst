@@ -12,10 +12,18 @@ three layers: breakers, alerts, and depth analysis on what they flag.
 
 ### Layer 1: Breakers
 
-Test each holding against its stored thesis using `thesis_ledger.py`. A fired
-breaker (thesis condition invalidated) short-circuits the decision to EXIT
-regardless of current price or valuation. This is the only layer that produces
-a final decision on its own.
+Test each holding against its stored thesis using `thesis_ledger.py
+--evaluate`. A fired breaker (thesis condition invalidated) short-circuits the
+decision to SÄLJ HELT regardless of current price or valuation. This is the
+only layer that produces a final decision on its own.
+
+The theses it tests come from `/analyze`, which writes one on every BUY or SELL
+call (`commands/analyze.md`). Until v3.0.0 nothing wrote them, so this layer
+had an empty ledger and could never fire — the reason the worked example in
+`commands/portfolio.md` shows a holding flagged ⚪ *"Ingen lagrad tes"*. A
+holding with no stored thesis is reported as exactly that, never as clear:
+`--evaluate` returns UNKNOWN where it cannot test, and silence is not
+confirmation.
 
 ### Layer 2: Alerts
 
@@ -32,27 +40,47 @@ Alerts trigger deeper review but do not themselves decide the action.
 ### Layer 3: Depth
 
 STANDARD depth (`SKILL.md` §4) on holdings flagged by layer 1 or 2. A clean
-holding gets `HOLD — nothing has changed` **with the date it was last
+holding gets `BEHÅLL — nothing has changed` **with the date it was last
 reviewed**. That date is what makes the answer honest rather than a skipped
-step. Conviction for holdings not taken to depth is capped at **MEDIUM**.
+step. Conviction for holdings not taken to depth is capped at **MEDIUM**, and
+where a breaker has fired at **LOW** — see `references/data-quality.md` §7 for
+the enforced ceiling.
 
 The three-layer approach means the cost scales with what changed rather than
 with the number of holdings. A 20-position portfolio where 3 are flagged costs
 the same effort as a careful review of those 3 names.
 
-## ADD / HOLD / TRIM / EXIT criteria
+## ÖKA / BEHÅLL / MINSKA / SÄLJ HELT criteria
+
+The action vocabulary is Swedish throughout (`SKILL.md` §13); the decision
+criteria for each action are unchanged — only the words naming them changed.
 
 | Action | Means |
 |---|---|
-| **ADD** | Conviction is BUY or at least MEDIUM, and position weight is below target for that conviction and the time horizon. Clear case to increase exposure. |
-| **HOLD** | Conviction is HOLD or thesis is intact (MEDIUM or better), and position is appropriately sized. Nothing has changed materially since the last review. Date the review. |
-| **TRIM** | Conviction is HOLD but valuation has moved above range, or concentration has drifted above the target weight, or a fresh analysis shows lower conviction than the earlier thesis. Reduce without exiting. |
-| **EXIT** | Conviction has fallen to SELL, or thesis has breached (layer 1 breaker), or valuation has moved into the tail of downside risk (bear case materially worse), or position has become illiquid. Close the position. |
+| **ÖKA** | Conviction is BUY or at least MEDIUM, and position weight is below target for that conviction and the time horizon. Clear case to increase exposure. |
+| **BEHÅLL** | Conviction is HOLD or thesis is intact (MEDIUM or better), and position is appropriately sized. Nothing has changed materially since the last review. Date the review. |
+| **MINSKA** | Conviction is HOLD but valuation has moved above range, or concentration has drifted above the target weight, or a fresh analysis shows lower conviction than the earlier thesis. Reduce without exiting. |
+| **SÄLJ HELT** | Conviction has fallen to SELL, or thesis has breached (layer 1 breaker), or valuation has moved into the tail of downside risk (bear case materially worse), or position has become illiquid. Close the position. |
+
+## Per-holding prose — delivered length and language
+
+The portfolio action table is the primary deliverable. Each holding may carry
+up to **80 words** of plain-language prose explaining the action, following the
+six rules in SKILL.md §7 (no inline tags, uncertainty stated in words, terms
+glossed on first use, no number without meaning, short sentences, capable of
+standing alone).
+
+This brief form is distinct from the single-company analysis, which runs to 800
+words at STANDARD depth. The portfolio holds a many-company view rather than a
+deep view. Prose longer than 80 words for a single holding belongs in the
+underlying material (printed on request) and surfaces in the action table itself
+only when material to the decision.
 
 ### Entry price — the cost-basis rule
 
-Entry price is optional and is stored, but it **never** enters the ADD/HOLD/TRIM/EXIT
-decision and **never** appears in the same table row as an action. Anchoring on
+Entry price is optional and is stored, but it **never** enters the
+ÖKA/BEHÅLL/MINSKA/SÄLJ HELT decision and **never** appears in the same table
+row as an action. Anchoring on
 what you paid is the disposition effect: selling winners and holding losers when
 the right decision is the opposite. Unrealised result is printed in a separate
 block **after** the actions are decided.
@@ -143,7 +171,11 @@ published API. So the honest label is **`SINGLE SOURCE`, tier 4** — not
 source; here there is no primary, and calling it one would be the contradiction
 this file exists to prevent. `horizon.py` prints
 `[SINGLE SOURCE - tier 4, Avanza; unverified against the issuer]` on the date
-line itself, and any line that carries the date onward must carry that with it.
+line itself — that bracketed form is Evidence-block notation, and it is where
+it stays. The delivered `Horisont` line is composed by hand, in words, per
+`SKILL.md` §9: "Datumet kommer från Avanzas kalender och är inte bekräftat mot
+bolaget." The disclosure is mandatory wherever the date reaches the answer;
+only its shape changed — never the bracketed form there.
 
 This is the one place the plugin depends on an unofficial endpoint as a sole
 source. It is accepted because a calendar date is not a financial figure and

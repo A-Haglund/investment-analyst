@@ -47,6 +47,12 @@ STORAGE
     and every file carries "schema_version" so the format can move.
     Override the root with THESIS_LEDGER_HOME.
 
+    Each file holds four data keys: theses, observations, decisions and the
+    identity. "decisions" was added in v3.0.0 WITHOUT a schema bump - it is
+    read everywhere as `.get("decisions") or []`, so a file written by an
+    older version loads untouched and an older version can still read a newer
+    file. See the Decisions section in the source for why.
+
 USAGE
     thesis_ledger.py "Sandvik" --add "Mining aftermarket holds group EBIT
         margin at or above 15% through the capex cycle."
@@ -61,7 +67,30 @@ USAGE
     thesis_ledger.py --metrics                       # what can be tested, and what cannot
     thesis_ledger.py --selftest                      # parser + status assertions, offline
 
+    thesis_ledger.py "Sandvik" --decide decision.json   # store a SS9 decision record
+    cat rec.json | thesis_ledger.py "Sandvik" --decide -
+    thesis_ledger.py "Sandvik" --decisions --limit 5    # what we said, newest first
+    thesis_ledger.py "Sandvik" --decision-latest        # the call that currently stands
+    thesis_ledger.py --supersede "LEI-xxx:2026-08-31T09:12:04Z"
+
     --json works on every command. --offline uses only the on-disk cache.
+
+A DECISION IS NOT A THESIS. Since v3.0.0 this file stores both, in the same
+per-issuer JSON, under two separate top-level keys, because they are two
+different objects with opposite properties:
+
+    thesis      price-free, falsifiable, durable. Re-tested by --evaluate
+                against numeric breakers. Never carries a price - a thesis
+                that flips on a quote is a trade, not a thesis.
+    decision    price-stamped, dated, superseded. Carries the price, the
+                scenarios, the expected return and the reason codes exactly
+                as SKILL.md section 9 specifies, and is never re-evaluated:
+                a past call is a fact about the past.
+
+Decisions are validated by decision_record.py (which owns the shape and the
+arithmetic) and are append-only: --supersede marks one as no longer standing,
+and nothing is ever rewritten or dropped. They do not go through --observe and
+they do not touch the breaker machinery.
 
 --as-of IS A BACK-TEST, NOT AN UPDATE. It answers "what would this thesis have
 said then", is written into the history labelled HISTORICAL, and deliberately
@@ -92,7 +121,9 @@ EXIT CODES
     2  company identity ambiguous or unresolvable - nothing was written
     3  no such company in the ledger, or no such thesis
     4  --evaluate completed and AT LEAST ONE BREAKER TRIGGERED
-    5  thesis rejected at creation as not falsifiable
+    5  thesis rejected at creation as not falsifiable, or a decision record
+       refused by decision_record.validate() - in either case NOTHING was
+       written
 
 Python 3 standard library only. Free, keyless.
 """
@@ -143,6 +174,17 @@ def mk_fact(**kw):
     if not HAS_UPPER_BOUND:
         kw.pop("publication_is_upper_bound", None)
     return FinancialFact(**kw)
+
+
+# decision_record.py owns the shape and the arithmetic of the OTHER object
+# this file now stores - the decision (see the Decisions section below). It is
+# loaded HARD, like finfact above and unlike the lazy() sibling imports,
+# because a decision must never be written unvalidated. If the schema module
+# is missing or broken, this file must fail to import rather than quietly fall
+# back to storing whatever it was handed; an unvalidated record is the one
+# outcome the whole design exists to prevent.
+decision_record = load("decision_record")
+DecisionError = decision_record.DecisionError
 
 
 _LAZY = {}
@@ -843,6 +885,10 @@ def _index_entry(led):
             "isin": ident.get("isin"),
             "aliases": led.get("aliases", []),
             "theses": len([t for t in led.get("theses", []) if t.get("active", True)]),
+            # Additive, and read through .get() so an index rebuilt from
+            # pre-v3.0.0 files simply reports 0 / None.
+            "decisions": len(led.get("decisions") or []),
+            "last_decision": (list_decisions(led, limit=1) or [{}])[0].get("created"),
             "last_updated": led.get("last_updated"),
             "last_evaluated": led.get("last_evaluated")}
 
@@ -1083,7 +1129,10 @@ def new_ledger(key, identity, alias):
             "last_updated": now_iso(),
             "last_evaluated": None,
             "theses": [],
-            "observations": {}}
+            "observations": {},
+            # Fourth data key, added in v3.0.0 with SCHEMA_VERSION still 1 -
+            # see the Decisions section for why no migration is needed.
+            "decisions": []}
 
 
 def save_ledger(led):
@@ -1124,6 +1173,331 @@ def find_thesis(led, tid):
         if t["id"].lower() == tid.lower():
             return t
     return None
+
+
+# --------------------------------------------------------------------------
+# Decisions (SKILL.md section 9)
+#
+# WHY THIS EXISTS
+#
+# Until v3.0.0 this toolkit produced an excellent analysis and then forgot
+# it. SKILL.md section 9 specified a machine-comparable decision record; no
+# script ever wrote one, so a past verdict was unrecoverable except by
+# re-running the analysis - which is not guaranteed to reproduce the same
+# call. Everything longitudinal (research delta, thesis health over time,
+# expectation calibration, monitoring, any track record at all) was blocked
+# behind that single absence.
+#
+# A DECISION IS NOT A THESIS
+#
+# The rule this file already states in falsifiability_report - "the ledger
+# deliberately stores no prices: a thesis that flips on a quote is a trade,
+# not a thesis" - is not weakened here. They are two objects:
+#
+#   thesis    price-free, falsifiable, durable. Re-tested by --evaluate
+#             against numeric breakers. NEVER carries a price.
+#   decision  price-stamped, dated, superseded. Carries the price, the
+#             scenarios and the arithmetic, and is never re-evaluated: a
+#             past call is a fact about the past, not a live claim.
+#
+# So decisions do NOT travel through --observe and do NOT touch the breaker
+# machinery. They live in the same per-issuer file because they need the one
+# thing that makes either object retrievable at all: the LEI/ISIN identity
+# and the atomic write.
+#
+# NO MIGRATION, AND NO SCHEMA BUMP
+#
+# SCHEMA_VERSION stays 1. `decisions` is a fourth top-level data key next to
+# theses/observations, and every reader here reaches it through
+# `.get("decisions") or []`. A ledger written before this change therefore
+# loads unchanged and every existing reader (--list, --evaluate, --history,
+# --all, portfolio_review.py) keeps working on it untouched. Bumping the
+# version would have forced migrate() to rewrite every file on disk purely
+# to insert an empty list, and would have made a v3.0.0 file unreadable to a
+# v2.5.0 script for no gain - the key is purely additive, so old and new
+# code can share the same file in BOTH directions.
+#
+# APPEND-ONLY, AND DELIBERATELY UNCAPPED
+#
+# The defect this does not repeat: status_history is capped with
+# `del thesis["status_history"][:-200]` in apply_evaluation, which silently
+# discards the oldest entries once a thesis has changed status 200 times.
+# Silent truncation of an audit trail destroys the one thing an audit trail
+# exists for. `decisions` therefore has NO bound: nothing is ever dropped.
+# That is affordable because a decision is produced by a human-initiated
+# analysis rather than by a loop - even a heavily covered issuer accumulates
+# a few dozen records a year at roughly a kilobyte each. If a bound is ever
+# genuinely needed, the contract is that the overflow is APPENDED to the
+# sibling journal named by decisions_spill_path() and never deleted. No code
+# writes that file today, and none should until the bound exists.
+# --------------------------------------------------------------------------
+
+WITHDRAWN = "WITHDRAWN"
+
+
+def decisions_spill_path(key):
+    """Where overflow WOULD go if `decisions` ever grew a bound.
+
+    Nothing writes this today (see the section note above: decisions are
+    uncapped). It exists so that the contract is in the code rather than in
+    somebody's memory: if a future change caps the in-file list, the entries
+    it removes must be appended here, one JSON object per line, in the order
+    they were written - never silently dropped the way status_history's
+    oldest 200 entries are.
+    """
+    return os.path.join(ledger_home(), key + ".decisions.jsonl")
+
+
+def _decision_sort_key(d):
+    """Chronological. `created` is an ISO-8601 Z timestamp, so lexical order
+    IS chronological order; decision_id breaks ties deterministically."""
+    return (d.get("created") or "", d.get("decision_id") or "")
+
+
+def _unique_decision_id(led, key, created):
+    """"<ledger_key>:<created ISO-8601>" - stable, and sortable as a string.
+
+    Two decisions recorded inside the same second would otherwise collide, so
+    the second one gets a zero-padded "#0002" suffix. The suffix sits AFTER
+    the whole fixed-width timestamp, so it sorts after the unsuffixed id and
+    still before the next second: string order stays chronological.
+    """
+    base = "%s:%s" % (key, created)
+    used = {d.get("decision_id") for d in (led.get("decisions") or [])}
+    if base not in used:
+        return base
+    n = 2
+    while "%s#%04d" % (base, n) in used:
+        n += 1
+    return "%s#%04d" % (base, n)
+
+
+def _merge_decision_identity(led, rec):
+    """Fill the record's identity from the ledger's, and refuse a conflict.
+
+    The ledger's identity is authoritative: it came from resolve_identity(),
+    which refuses an ambiguous name rather than guessing, and the file is
+    keyed on the LEI/ISIN it produced. So a record handed in with a partial
+    identity is completed from it rather than refused for a field the store
+    already knows.
+
+    A record whose LEI or ISIN CONTRADICTS the ledger's is refused. Filing a
+    decision about one issuer into another issuer's ledger is exactly the
+    defect the LEI keying exists to prevent ("Volvo" is two listed
+    companies), and it would be undetectable afterwards.
+
+    Returns a shallow copy; the caller's dict is not mutated.
+    """
+    ident = dict(rec.get("identity") or {})
+    src = led.get("identity") or {}
+
+    def known(v):
+        return bool(v) and v != NA
+
+    for dest, source in (("name", "company_name"), ("legal_name", "legal_name"),
+                         ("ticker", "ticker"), ("lei", "lei"), ("isin", "isin"),
+                         ("org_number", "organisation_number"),
+                         ("country", "country")):
+        if not known(ident.get(dest)) and known(src.get(source)):
+            ident[dest] = src[source]
+
+    for field in ("lei", "isin"):
+        mine, theirs = ident.get(field), src.get(field)
+        if known(mine) and known(theirs) and \
+                str(mine).strip().upper() != str(theirs).strip().upper():
+            raise DecisionError(
+                "the record's %s (%s) is not this ledger's %s (%s). A decision "
+                "filed under the wrong issuer is the exact defect LEI keying "
+                "exists to prevent, so it is refused rather than stored."
+                % (field.upper(), mine, field.upper(), theirs))
+
+    out = dict(rec)
+    out["identity"] = ident
+    return out
+
+
+def decision_thesis_ref(led):
+    """What the thesis said at decision time, recorded ON the decision.
+
+    The two objects are wired together LOOSELY and in one direction only: the
+    decision records a reference to the thesis, and the thesis is not touched.
+    A decision is storable with no thesis at all (this returns None), and a
+    thesis is completely unaffected by decisions - so neither object depends
+    on the other's presence.
+
+    The status recorded is the thesis's CURRENT DERIVED STATUS exactly as
+    apply_evaluation last stored it. It is READ, never recomputed: recomputing
+    needs the network, which would mean a decision could not be stored while a
+    filing server is down. A stale filing is not a reason to lose a decision.
+
+    `thesis_id`/`status` name the WORST-standing active thesis (STATUS_ORDER
+    puts BROKEN first), because that is the one a later reader needs to see;
+    every active thesis is listed under `active_theses` so nothing is hidden.
+    """
+    active = [t for t in (led.get("theses") or []) if t.get("active", True)]
+    if not active:
+        return None
+    rank = {s: i for i, s in enumerate(STATUS_ORDER)}
+    worst = min(active, key=lambda t: (rank.get(t.get("status"), len(STATUS_ORDER)),
+                                       t.get("id") or ""))
+    return {"thesis_id": worst.get("id"),
+            "status": worst.get("status"),
+            "status_since": worst.get("status_since"),
+            "as_of": worst.get("as_of"),
+            "last_evaluated": worst.get("last_evaluated"),
+            "action": worst.get("action"),
+            "active_theses": [{"thesis_id": t.get("id"), "status": t.get("status")}
+                              for t in active],
+            "captured_at": now_iso()}
+
+
+def add_decision(led, rec):
+    """Validate a decision record and append it to this issuer's ledger.
+
+    Returns the STORED record - the live dict inside `led`, not a copy, so a
+    later reader (the outcome writer) can fill `outcome` in place and save.
+
+    DecisionError from decision_record.validate() is deliberately NOT caught
+    here. A record whose expected return disagrees with its own inputs, or
+    whose verdict is not one of the six, is refused and nothing is written: a
+    persisted number that lies about its own inputs is worse than no number,
+    and far worse than a visible refusal.
+
+    `led` is mutated in memory only; the CALLER writes the file with
+    save_ledger(led). That ordering is what guarantees a refused record
+    cannot leave a half-written or partly-updated ledger behind.
+
+    Stamped here, never taken from the caller: `created`, `decision_id`,
+    `ledger_key`. `outcome` is left None - the outcome is written later, once
+    the world has had time to disagree - and `superseded_by` is left None,
+    because a decision is never born superseded.
+    """
+    if not isinstance(rec, dict):
+        # _merge_decision_identity() would raise AttributeError on a JSON list
+        # or string; refuse in the module's own error type instead, so every
+        # caller has exactly one exception to catch.
+        raise DecisionError("decision record must be a JSON object")
+    key = led.get("ledger_key")
+    if not key:
+        raise DecisionError("this ledger has no ledger_key; a decision cannot "
+                            "be filed against an unidentified issuer")
+
+    rec = _merge_decision_identity(led, rec)
+    stored, warnings = decision_record.validate(rec, strict=True)
+
+    # Round-tripping through JSON does two jobs. It proves the record can
+    # actually be written BEFORE it is appended - otherwise a value JSON
+    # cannot represent would blow up inside save_ledger(), leaving the ledger
+    # in memory holding a record that can never reach disk. And it severs the
+    # nested dicts validate() shares with the caller's input, so a caller that
+    # reuses and edits its record dict cannot retroactively change history.
+    try:
+        stored = json.loads(json.dumps(stored, ensure_ascii=False))
+    except (TypeError, ValueError) as exc:
+        raise DecisionError("the record holds a value JSON cannot store: %s"
+                            % exc)
+
+    stored["ledger_key"] = key
+    stored["created"] = now_iso()
+    stored["decision_id"] = _unique_decision_id(led, key, stored["created"])
+    stored["superseded_by"] = None
+    stored["superseded_at"] = None
+    stored["outcome"] = None
+    if warnings:
+        # Kept on the record rather than printed and lost: a warning about a
+        # missing rationale is exactly what a later reader wants to know.
+        stored["validation_warnings"] = list(warnings)
+
+    ref = decision_thesis_ref(led)
+    if ref is not None:
+        stored["thesis_ref"] = ref
+
+    led.setdefault("decisions", []).append(stored)
+    return stored
+
+
+def list_decisions(led, limit=None):
+    """Every stored decision, NEWEST FIRST. `limit` caps the rows returned.
+
+    `.get("decisions") or []`, so a ledger written before v3.0.0 - which has
+    no such key - reads as "no decisions" instead of raising.
+
+    Returns the live dicts, not copies: get_decision()/latest_decision() are
+    the read path AND the way an outcome is later attached in place.
+    """
+    rows = sorted((led.get("decisions") or []), key=_decision_sort_key,
+                  reverse=True)
+    if limit is not None:
+        rows = rows[:max(0, int(limit))]
+    return rows
+
+
+def latest_decision(led):
+    """The decision that currently STANDS, or None.
+
+    Newest by `created` among those not superseded. Superseding the newest
+    therefore falls back to the previous standing decision rather than leaving
+    the issuer with nothing - the record was withdrawn, not the history.
+    """
+    for d in list_decisions(led):
+        if not d.get("superseded_by"):
+            return d
+    return None
+
+
+def get_decision(led, decision_id):
+    """One decision by id, or None. Case-insensitive as a fallback only, the
+    same courtesy find_thesis() extends to a thesis id."""
+    if not decision_id:
+        return None
+    rows = led.get("decisions") or []
+    for d in rows:
+        if d.get("decision_id") == decision_id:
+            return d
+    needle = str(decision_id).lower()
+    for d in rows:
+        if str(d.get("decision_id") or "").lower() == needle:
+            return d
+    return None
+
+
+def supersede_decision(led, decision_id, by_id=None):
+    """Mark a stored decision as no longer standing. True if it changed.
+
+    This is the only sanctioned way a decision stops applying. The record is
+    never edited and never deleted: --decisions still lists it, its numbers
+    stay auditable and its outcome can still be scored later. That
+    append-only property is what the longitudinal layer rests on - a track
+    record drawn from a store that quietly rewrites its own history is not a
+    track record.
+
+    by_id  the decision_id that replaced this one, or None when it was simply
+           withdrawn (WITHDRAWN is recorded, so "replaced by X" and "retired
+           with no replacement" stay distinguishable). A by_id naming a
+           decision this ledger does not hold is REFUSED with ValueError: a
+           superseded_by pointing at nothing is worse than no pointer.
+
+    Returns False when there is no such decision, and False when it was
+    already superseded - re-superseding would overwrite the first
+    supersession's timestamp, which is a rewrite of the history.
+    """
+    target = get_decision(led, decision_id)
+    if target is None:
+        return False
+    if by_id is not None:
+        if not isinstance(by_id, str) or not by_id.strip():
+            raise ValueError("by_id must be a decision_id string, or None")
+        if by_id == target.get("decision_id"):
+            raise ValueError("a decision cannot supersede itself: %s" % by_id)
+        if get_decision(led, by_id) is None:
+            raise ValueError(
+                "no decision %r in this ledger, so superseded_by would point "
+                "at nothing. Refused rather than written." % by_id)
+    if target.get("superseded_by"):
+        return False
+    target["superseded_by"] = by_id or WITHDRAWN
+    target["superseded_at"] = now_iso()
+    return True
 
 
 # --------------------------------------------------------------------------
@@ -2521,6 +2895,192 @@ def cmd_retire(args, led):
     return 0
 
 
+def _read_decision_json(src):
+    """Read a decision record from a path, or from stdin for "-".
+
+    Returns (record, error). A parse or read failure comes back as an error
+    string rather than an exception so the caller can refuse without writing.
+    """
+    if src == "-":
+        raw = sys.stdin.read()
+    else:
+        try:
+            with open(src, "r", encoding="utf-8") as fh:
+                raw = fh.read()
+        except OSError as exc:
+            return None, "could not read %s: %s" % (src, exc)
+    try:
+        rec = json.loads(raw)
+    except ValueError as exc:
+        return None, "not valid JSON - %s" % exc
+    return rec, None
+
+
+def cmd_decide(args, led, key):
+    """Store one SKILL.md section 9 decision record.
+
+    Nothing is written unless validation passes: save_ledger() is reached only
+    after add_decision() returns. A refused record leaves the file on disk
+    exactly as it was - including leaving no file at all for an issuer whose
+    first decision was the refused one.
+    """
+    rec, err = _read_decision_json(args.decide)
+    if err:
+        print("REFUSED: %s" % err, file=sys.stderr)
+        if args.as_json:
+            print(json.dumps({"stored": False, "ledger_key": key,
+                              "reason": err}, indent=2, ensure_ascii=False))
+        return 5
+
+    try:
+        stored = add_decision(led, rec)
+    except DecisionError as exc:
+        print("REFUSED: %s" % exc, file=sys.stderr)
+        if args.as_json:
+            print(json.dumps({"stored": False, "ledger_key": key,
+                              "reason": str(exc)}, indent=2, ensure_ascii=False))
+        else:
+            print("Nothing was written to the ledger.")
+        return 5
+
+    save_ledger(led)
+    for w in stored.get("validation_warnings") or []:
+        print("warning: %s" % w, file=sys.stderr)
+
+    if args.as_json:
+        print(json.dumps({"stored": True, "ledger_key": key,
+                          "file": ledger_path(key),
+                          "decision_id": stored["decision_id"],
+                          "decision": stored}, indent=2, ensure_ascii=False))
+        return 0
+
+    print(decision_record.render_decision_block(stored))
+    print()
+    print("Stored as %s" % stored["decision_id"])
+    print("  in %s" % ledger_path(key))
+    ref = stored.get("thesis_ref")
+    if ref:
+        print("  thesis at decision time: %s was %s"
+              % (ref.get("thesis_id"), ref.get("status") or "?"))
+    else:
+        print("  no thesis is stored for this issuer, so the decision stands "
+              "on its own record. --add one if the case is meant to be "
+              "re-testable.")
+    return 0
+
+
+def cmd_decisions(args, led):
+    rows = list_decisions(led, limit=args.limit)
+    total = len(led.get("decisions") or [])
+    if args.as_json:
+        print(json.dumps({"ledger_key": led["ledger_key"],
+                          "identity": led["identity"],
+                          "file": ledger_path(led["ledger_key"]),
+                          "count": total,
+                          "standing": (latest_decision(led) or {}).get("decision_id"),
+                          "decisions": rows}, indent=2, ensure_ascii=False))
+        return 0
+    print_header(led)
+    if not total:
+        print("No decisions recorded. Store one with --decide <record.json>")
+        print("(or --decide - to pipe it in). Nothing is stored unvalidated.")
+        return 0
+    print("%d decision(s)%s, newest first:"
+          % (len(rows), "" if len(rows) == total else " of %d" % total))
+    print()
+    print("  %-21s %-11s %-10s %-8s %-12s %8s"
+          % ("recorded", "verdict", "conviction", "depth", "price", "exp.ret"))
+    print("  " + "-" * 74)
+    for d in rows:
+        price = d.get("price") or {}
+        er = d.get("expected_return")
+        pv = price.get("value")
+        print("  %-21s %-11s %-10s %-8s %-12s %8s"
+              % ((d.get("created") or "?")[:21], d.get("verdict") or "?",
+                 d.get("conviction") or "?", d.get("depth") or "?",
+                 "%s %s" % (price.get("currency") or "?",
+                            fmt_value(MONEY, pv) if pv is not None else NA),
+                 ("%+.1f%%" % (100.0 * er)) if er is not None else "n/a"))
+        print("      %s" % (d.get("decision_id") or "?"))
+        if d.get("superseded_by"):
+            print("      superseded %s by %s"
+                  % (d.get("superseded_at") or "?", d["superseded_by"]))
+        if d.get("outcome"):
+            print("      outcome recorded")
+    print()
+    print("A decision is kept for ever and never rewritten: --supersede marks")
+    print("one as no longer standing, and --decision-latest shows the one that is.")
+    return 0
+
+
+def cmd_decision_latest(args, led):
+    d = latest_decision(led)
+    if d is None:
+        total = len(led.get("decisions") or [])
+        msg = ("No decision stands for this issuer: %s"
+               % ("nothing has been recorded yet."
+                  if not total else
+                  "all %d recorded decision(s) have been superseded." % total))
+        if args.as_json:
+            print(json.dumps({"ledger_key": led["ledger_key"], "decision": None,
+                              "reason": msg}, indent=2, ensure_ascii=False))
+        else:
+            print(msg)
+        return 3
+    if args.as_json:
+        print(json.dumps({"ledger_key": led["ledger_key"],
+                          "file": ledger_path(led["ledger_key"]),
+                          "decision_id": d.get("decision_id"),
+                          "decision": d}, indent=2, ensure_ascii=False))
+        return 0
+    print(decision_record.render_decision_block(d))
+    print()
+    print("decision id %s" % d.get("decision_id"))
+    print("recorded    %s" % d.get("created"))
+    ref = d.get("thesis_ref")
+    if ref:
+        print("thesis %s was %s at decision time; --evaluate for where it "
+              "stands now." % (ref.get("thesis_id"), ref.get("status")))
+    return 0
+
+
+def cmd_supersede(args, led):
+    did = args.supersede
+    target = get_decision(led, did)
+    if target is None:
+        print("No decision %r in %s. Run --decisions to see the ids."
+              % (did, led["ledger_key"]))
+        return 3
+    if target.get("superseded_by"):
+        print("%s was already superseded by %s at %s. A superseded decision is "
+              "never rewritten." % (target.get("decision_id"),
+                                    target["superseded_by"],
+                                    target.get("superseded_at") or "?"))
+        return 3
+    try:
+        supersede_decision(led, did, by_id=args.superseded_by)
+    except ValueError as exc:
+        print("REFUSED: %s" % exc, file=sys.stderr)
+        return 5
+    save_ledger(led)
+    if args.as_json:
+        print(json.dumps({"ledger_key": led["ledger_key"],
+                          "superseded": target.get("decision_id"),
+                          "superseded_by": target.get("superseded_by"),
+                          "superseded_at": target.get("superseded_at"),
+                          "standing": (latest_decision(led) or {}).get("decision_id")},
+                         indent=2, ensure_ascii=False))
+        return 0
+    print("%s no longer stands (superseded_by %s)."
+          % (target.get("decision_id"), target.get("superseded_by")))
+    print("It stays in the file: the record, its numbers and its outcome remain")
+    print("auditable. --decisions still lists it.")
+    standing = latest_decision(led)
+    print("Now standing: %s"
+          % (standing.get("decision_id") if standing else
+             "nothing - every recorded decision has been superseded."))
+    return 0
+
 def cmd_metrics(args):
     groups = {"REPORTED": [], "DERIVED": [], "MANUAL": []}
     for mid, d in sorted(M.items()):
@@ -2650,6 +3210,121 @@ def _selftest():
     except Ambiguous:
         ok += 1
 
+    # ----------------------------------------------------------------------
+    # Decisions. Entirely in memory: new_ledger() returns a plain dict and
+    # nothing here calls save_ledger(), so the selftest never touches
+    # ~/.investment-analyst or the network.
+    # ----------------------------------------------------------------------
+    SLEI = "213800Y2XLTQMHLB5J34"
+    def fresh():
+        return new_ledger("LEI-" + SLEI,
+                          {"lei": SLEI, "isin": "SE0000667891",
+                           "company_name": "Sandvik AB", "ticker": "SAND.ST",
+                           "organisation_number": "556000-3468"},
+                          "Sandvik")
+
+    led = fresh()
+    d1 = add_decision(led, decision_record._sandvik_fixture())
+    assert d1["decision_id"].startswith("LEI-%s:" % SLEI), d1["decision_id"]
+    assert d1["ledger_key"] == "LEI-" + SLEI
+    assert abs(d1["expected_return"] - 0.2086) < 0.001, d1["expected_return"]
+    # never born superseded, and never born with an outcome
+    assert d1["superseded_by"] is None and d1["outcome"] is None
+    # a decision is storable with NO thesis on file
+    assert "thesis_ref" not in d1 and not led["theses"]
+    ok += 1
+
+    # A record whose stated expected return disagrees with its own inputs is
+    # refused, and NOTHING is appended.
+    bad = decision_record._sandvik_fixture()
+    bad["expected_return"] = 0.35
+    before = len(led["decisions"])
+    try:
+        add_decision(led, bad)
+        raise AssertionError("a wrong expected_return must be refused")
+    except DecisionError:
+        ok += 1
+    assert len(led["decisions"]) == before, "a refused record was still stored"
+
+    # A record naming a different issuer must never land in this ledger.
+    wrong = decision_record._sandvik_fixture()
+    wrong["identity"] = dict(wrong["identity"], lei="549300HGV012CNC8JD22")
+    try:
+        add_decision(led, wrong)
+        raise AssertionError("a foreign LEI must be refused")
+    except DecisionError:
+        ok += 1
+    assert len(led["decisions"]) == before
+
+    # Append-only: the second decision does not touch the first, and the
+    # newest one stands.
+    second = decision_record._sandvik_fixture()
+    second["verdict"] = "HOLD"
+    d2 = add_decision(led, second)
+    assert len(led["decisions"]) == 2
+    assert get_decision(led, d1["decision_id"])["verdict"] == "BUY"
+    assert [d["decision_id"] for d in list_decisions(led)] == \
+        [d2["decision_id"], d1["decision_id"]], "list_decisions must be newest first"
+    assert latest_decision(led)["decision_id"] == d2["decision_id"]
+    assert list_decisions(led, limit=1) == [d2]
+    ok += 1
+
+    # Supersede marks, never deletes, and never rewrites twice.
+    assert supersede_decision(led, d1["decision_id"], by_id=d2["decision_id"]) is True
+    assert get_decision(led, d1["decision_id"])["superseded_by"] == d2["decision_id"]
+    assert supersede_decision(led, d1["decision_id"]) is False
+    assert len(led["decisions"]) == 2, "supersede must not delete"
+    assert latest_decision(led)["decision_id"] == d2["decision_id"]
+    try:
+        supersede_decision(led, d2["decision_id"],
+                           by_id="LEI-nope:2026-01-01T00:00:00Z")
+        raise AssertionError("a superseded_by pointing at nothing must be refused")
+    except ValueError:
+        ok += 1
+    # Withdrawing the last standing decision leaves nothing standing, but the
+    # history is intact.
+    assert supersede_decision(led, d2["decision_id"]) is True
+    assert get_decision(led, d2["decision_id"])["superseded_by"] == WITHDRAWN
+    assert latest_decision(led) is None
+    assert len(list_decisions(led)) == 2
+    ok += 1
+
+    # A thesis on file is referenced BY the decision, and is not touched by it.
+    led = fresh()
+    led["theses"] = [{"id": "T1", "thesis": "x", "status": "WARNING",
+                      "active": True, "status_since": "2026-01-01T00:00:00Z"}]
+    snapshot = json.dumps(led["theses"], sort_keys=True)
+    d3 = add_decision(led, decision_record._sandvik_fixture())
+    assert d3["thesis_ref"]["thesis_id"] == "T1"
+    assert d3["thesis_ref"]["status"] == "WARNING"
+    assert json.dumps(led["theses"], sort_keys=True) == snapshot, \
+        "storing a decision must not modify the thesis"
+    ok += 1
+
+    # A ledger written before v3.0.0 has no "decisions" key at all. Every
+    # reader must cope, and a first decision must still land.
+    old = fresh()
+    del old["decisions"]
+    assert list_decisions(old) == [] and latest_decision(old) is None
+    assert get_decision(old, "anything") is None
+    assert supersede_decision(old, "anything") is False
+    assert _index_entry(old)["decisions"] == 0
+    add_decision(old, decision_record._sandvik_fixture())
+    assert len(old["decisions"]) == 1
+    ok += 1
+
+    # NOT TRUNCATED. status_history is capped at 200 with a silent
+    # `del [:-200]`; decisions must never lose an entry, so push past that
+    # bound and count.
+    led = fresh()
+    for _ in range(205):
+        add_decision(led, decision_record._sandvik_fixture())
+    assert len(led["decisions"]) == 205, \
+        "decisions were truncated at %d" % len(led["decisions"])
+    assert len({d["decision_id"] for d in led["decisions"]}) == 205, \
+        "decision ids collided inside one second"
+    ok += 1
+
     print("thesis_ledger selftest: %d assertions passed" % ok)
     return 0
 
@@ -2695,6 +3370,25 @@ def main():
     ap.add_argument("--reason", help="reason for --retire")
     ap.add_argument("--metrics", action="store_true", dest="do_metrics",
                     help="list every metric and whether it can be auto-tested")
+    ap.add_argument("--decide", metavar="PATH",
+                    help="store a SKILL.md section 9 decision record read from "
+                         "a JSON file, or - for stdin. Validated by "
+                         "decision_record.py: refused, and NOT stored, if the "
+                         "arithmetic disagrees with its own inputs")
+    ap.add_argument("--decisions", action="store_true", dest="do_decisions",
+                    help="list the decisions on record, newest first")
+    ap.add_argument("--decision-latest", action="store_true",
+                    dest="do_decision_latest",
+                    help="show the decision that currently stands")
+    ap.add_argument("--supersede", metavar="DECISION_ID",
+                    help="mark a decision as no longer standing. It is kept, "
+                         "never deleted. The company may be omitted: the id "
+                         "already carries the ledger key")
+    ap.add_argument("--superseded-by", metavar="DECISION_ID",
+                    help="the decision that replaced the one being superseded; "
+                         "omit it when the decision was simply withdrawn")
+    ap.add_argument("--limit", type=int, metavar="N",
+                    help="show at most N rows (--decisions)")
     ap.add_argument("--country", help="ISO-2 hint for identity resolution, e.g. SE")
     ap.add_argument("--refresh-identity", action="store_true",
                     help="re-resolve the company instead of trusting the ledger")
@@ -2711,14 +3405,32 @@ def main():
         return cmd_metrics(args)
     if args.do_all:
         return cmd_all(args)
+    if args.supersede and not args.company:
+        # A decision_id already CARRIES the identity - "<ledger key>:<when>" -
+        # so the ledger opens directly, with no name to resolve and no
+        # network. Splitting on the FIRST colon is safe: a ledger key never
+        # contains one (LEI-xxx / ISIN-xxx) and the ISO timestamp always does.
+        skey = args.supersede.partition(":")[0]
+        sled = read_ledger(skey)
+        if sled is None:
+            print("No ledger %r. A decision id reads "
+                  "<LEI-xxx|ISIN-xxx>:<timestamp>; run --all to list the "
+                  "companies on file." % skey)
+            return 3
+        return cmd_supersede(args, sled)
+
     if not args.company:
-        ap.error("give a company, or use --all / --metrics / --selftest")
+        ap.error("give a company, or use --all / --metrics / --selftest, or "
+                 "--supersede with a full decision id")
 
     creating = bool(args.add)
     try:
         led, key, identity = load_or_create(
             args.company, country=args.country, offline=args.offline,
-            refresh=args.refresh_identity, create=creating or bool(args.observe))
+            refresh=args.refresh_identity,
+            # A decision must be storable for an issuer with no thesis, so
+            # --decide creates the file the same way --add and --observe do.
+            create=creating or bool(args.observe) or bool(args.decide))
     except Ambiguous as exc:
         if args.as_json:
             print(json.dumps({"resolved": False, "query": args.company,
@@ -2748,8 +3460,18 @@ def main():
 
     if args.observe:
         rc = cmd_observe(args, led)
-        if rc or not (args.add or args.evaluate or args.do_list or args.do_history):
+        if rc or not (args.add or args.evaluate or args.do_list or args.do_history
+                      or args.decide or args.supersede or args.do_decisions
+                      or args.do_decision_latest):
             return rc
+    if args.decide:
+        return cmd_decide(args, led, key)
+    if args.supersede:
+        return cmd_supersede(args, led)
+    if args.do_decisions:
+        return cmd_decisions(args, led)
+    if args.do_decision_latest:
+        return cmd_decision_latest(args, led)
     if args.retire:
         return cmd_retire(args, led)
     if args.add:

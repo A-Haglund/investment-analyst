@@ -19,3 +19,6 @@ __pycache__/
 
 # Build output
 /dist/
+
+# Runtime output from the scheduled screen. Regenerated on every run.
+/scheduled/logs/

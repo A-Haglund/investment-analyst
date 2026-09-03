@@ -130,6 +130,9 @@ def load(name):
 finfact = load("finfact")
 esef = load("esef_fundamentals")
 company_resolve = load("company_resolve")
+# finmath.py (v3.0.0): the shared CAGR/margin/growth math. See cagr_fact()
+# below for why this script now delegates its CAGR arithmetic to it.
+finmath = load("finmath")
 
 FinancialFact = finfact.FinancialFact
 Verification = finfact.Verification
@@ -230,14 +233,41 @@ def fetch_esef(lei, years):
     return merged, filings, None
 
 
+def _unit_currency(unit):
+    """'iso4217:SEK' -> 'SEK'; a per-share or ratio compound
+    ('iso4217:SEK/xbrli:shares') and a non-monetary unit ('xbrli:shares')
+    carry no reporting currency of their own. Same rule as peers_se.py's
+    ccy_of_unit() / esef_fundamentals.py's inline version - kept local here
+    rather than imported, since it is three lines and pulling in a whole
+    sibling module for it would be its own small maintenance burden."""
+    if not unit or not unit.startswith("iso4217:") or "/" in unit:
+        return None
+    return unit.split(":", 1)[1]
+
+
 def to_facts_esef(merged, currency):
+    """`currency` is the ISSUER'S CURRENT reporting currency (company_
+    resolve.py's reporting_currency(), read off the latest filing) - a
+    single value, used as the fallback for any period whose own XBRL unit
+    is not a plain ISO-4217 currency. Each period's FACT, however, now
+    carries that PERIOD's actual currency when the ESEF unit states one.
+
+    This is not cosmetic: cagr_fact() below refuses to compound two periods
+    whose currencies differ (see its docstring for the Betsson case this
+    guards against - a SEK-to-EUR redenomination). That check has no teeth
+    if every period is blanket-stamped with the same "current" currency
+    regardless of what it actually reported in - which is what this
+    function did before, and is silently wrong for any issuer whose
+    reporting currency ever changed.
+    """
     out = {}
     for metric, periods in merged.items():
         out[metric] = {}
         for period_end, info in periods.items():
+            period_currency = _unit_currency(info.get("unit")) or currency
             out[metric][period_end] = FinancialFact(
                 metric=metric, value=info["val"], source="esef",
-                period_end=period_end, unit="currency", currency=currency,
+                period_end=period_end, unit="currency", currency=period_currency,
                 source_detail="ESEF concept %s, filing %s" % (info["concept"], info["filing"]),
                 verification=Verification.SINGLE_SOURCE,
                 freshness_key="annual_financials")
@@ -365,18 +395,54 @@ def window_avg_ratio(ratio_facts, window, name=None):
 
 def cagr_fact(facts, window, metric_name):
     """CAGR over `window` years (window=1 is plain YoY growth). None if the
-    window years of history are not both present."""
+    window years of history are not both present.
+
+    Delegates the arithmetic to finmath.cagr_between(), which fixed two bugs
+    that used to live directly in this function (independently of, but
+    identically to, the two peers_se.py:1104-1135 documents fixing there):
+
+      1. INDEX EXPONENT. `(v1/v0) ** (1.0/window) - 1` assumes the two
+         periods chosen (`window` entries apart in this metric's sorted
+         period list) are exactly `window` calendar years apart. A period
+         list with a gap - an ESEF filing missed, an interim year with no
+         matching concept - breaks that assumption silently: a "2-year"
+         window can span 3 elapsed calendar years, and the exponent was
+         wrong by a third. finmath.cagr_between() derives the exponent from
+         the actual elapsed time between the two periods instead.
+      2. NO CURRENCY CHECK. `facts[start]` and `facts[end]` were compounded
+         with no check that they report in the same currency. A redenomination
+         between `start` and `end` (Betsson's SEK-to-EUR case is
+         peers_se.py's worked example) silently produced a fabricated growth
+         rate. finmath.cagr_between() refuses (value=None) when the two
+         periods' FinancialFact.currency values are both known and differ -
+         see to_facts_esef() above for why that field is now trustworthy
+         per period rather than blanket-stamped with the issuer's current
+         currency.
+
+    Unlike peers_se.py's cagr() (which scans the whole series for the
+    earliest period matching the latest one's currency), this function keeps
+    its original two-point contract: `start` and `end` are still chosen by
+    index (`window` periods apart), not by a currency-matching search. A
+    currency mismatch between those two specific points therefore refuses
+    outright (returns None) rather than falling back to some other pair -
+    correct for "refuse rather than guess", but note this window's CAGR can
+    come back DATA NOT AVAILABLE across a redenomination even where a wider
+    search might have found a same-currency pair.
+    """
     periods = sorted(facts)
     if len(periods) < window + 1:
         return None
     end, start = periods[-1], periods[-1 - window]
-    v0, v1 = facts[start].value, facts[end].value
-    if not v0 or v0 <= 0:
+    result = finmath.cagr_between(facts[start].value, facts[end].value, start, end,
+                                  currency0=facts[start].currency,
+                                  currency1=facts[end].currency)
+    if result.value is None:
         return None
-    value = (v1 / v0) ** (1.0 / window) - 1
-    fact = FinancialFact(metric=metric_name, value=value, source=facts[end].source,
+    v0, v1 = facts[start].value, facts[end].value
+    fact = FinancialFact(metric=metric_name, value=result.value, source=facts[end].source,
                          period_end=end, unit="percent",
-                         source_detail="CAGR %d yr: %s (%.4g) -> %s (%.4g)" % (window, start, v0, end, v1),
+                         source_detail="CAGR %.2f yr (calendar): %s (%.4g) -> %s (%.4g)"
+                                       % (result.years, start, v0, end, v1),
                          verification=weakest_verification(facts[start].verification, facts[end].verification),
                          freshness_key="annual_financials")
     return combine_conf(fact, facts[start], facts[end])

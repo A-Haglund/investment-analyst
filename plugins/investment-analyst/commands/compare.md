@@ -8,15 +8,33 @@ Compare these companies head to head: **$ARGUMENTS**
 Use the `investment-analyst` skill at **COMPARE** depth (see `SKILL.md` §4),
 and read `references/portfolio.md` for the ranking method.
 
-Requirements:
+**Delivered length: the ranking table, plus 80 words per company** (SKILL.md §4).
+
+## Tagging and uncertainty (SKILL.md §§1, 7)
+
+The tagging discipline governs the work but does not appear in the delivered answer. Uncertainty reaches the reader in plain words per SKILL.md §7: single-sourced figures as "bolagets egen siffra, ingen oberoende källa bekräftar den", estimates as "analytikernas prognos, inte ett utfall". The Evidence block and decision record are produced but printed only on request.
+
+## Reader model (SKILL.md §7)
+
+Write for someone who owns shares and follows the news, not an analyst. Every financial term is glossed in six words or fewer on first use, or avoided entirely. Cap the prose per company name at 80 words; any longer, the comparison is unreadable.
+
+## Requirements
 
 - Default to **COMPARE depth per company** — QUICK plus the Moat Score plus a
   light bear/base/bull, so downside and risk/reward have a real basis. Roughly
   4–6 minutes per company; comparing five names at DEEP depth is over two
   hours. Go deeper only on the winner, and only if the user asks.
 - COMPARE runs no DCF, no reverse DCF, no peer set and no nine-category
-  scorecard — and therefore produces **no Investment Score**. Conviction caps
-  at **MEDIUM** for every name in the run, the same cap QUICK carries.
+  scorecard — and therefore produces **no Investment Score**. COMPARE depth
+  carries a conviction ceiling of MEDIUM, computed and enforced by
+  `decision_record.py`; a record above it is refused
+  (`references/data-quality.md` §7).
+- **One decision record per company** (SKILL.md §9), each with
+  `producer: compare` and its own identity, emitted as JSON and rendered rather
+  than typed. COMPARE runs light scenarios, so its records carry a fair value
+  and an expected return; they carry no Investment Score, so attach
+  `DEPTH_NO_SCORECARD`. Seed no thesis from a comparison — go to `/analyze` on
+  the winner for that.
 - Analyse every company **to the same depth**. An uneven comparison ranks effort,
   not opportunity. If you must go shallower to cover them all, go shallower on
   all of them equally and say what depth you used.
@@ -40,9 +58,21 @@ Requirements:
   peer multiple that COMPARE never computed is the exact failure this system
   exists to prevent.
 - State which name is most attractive, why, and what would have to be true for
-  the runner-up to overtake it.
+  the runner-up to overtake it — in plain words, 80 words or less per name.
 - Text output only. Build no artifact unless the user asks for one.
 - Note explicitly where the companies are not truly comparable (different
   business models, cycle positions or accounting bases).
-- Close with the grouped signal line defined in `SKILL.md` §9, one line for
-  the whole comparison, then `Viktigast` for the run as a whole.
+
+## Closing line
+
+Close with the grouped signal line defined in `SKILL.md` §9, one line for
+the whole comparison, then `Viktigast` for the run as a whole. Finish with:
+
+```
+Vill du se underlaget — siffror, värdering, källor och Evidence-block — säg **visa underlaget**.
+```
+
+**Nothing follows this line.** No trailing "Sources:" line, no bibliography, no
+source list of any kind. Sources live in the Evidence block, which is
+underlying material — a trailing source list is that block leaking into the
+answer, and it is the single most common way this format fails.

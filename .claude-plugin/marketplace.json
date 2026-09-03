@@ -12,7 +12,7 @@
     {
       "name": "investment-analyst",
       "source": "./plugins/investment-analyst",
-      "description": "Deep equity research on Swedish and US listed companies producing a sourced BUY/HOLD/SELL call.",
+      "description": "Deep equity research on Nordic, German and French listed companies, producing a sourced BUY/HOLD/SELL call in plain language.",
       "category": "finance"
     }
   ]

@@ -741,23 +741,68 @@ def _merge_duplicate_holdings(holdings):
     """Merge rows that key to the same identity (lei, else isin, else
     name.lower()) into one holding with quantity SUMMED - two Avanza
     accounts, or an ISK and a KF line in one paste, must not become two
-    positions for one issuer. Two lots at two different prices have no
-    single cost basis, so cost_per_share/cost_currency are cleared to None
-    on any row that actually gets merged, rather than picking one lot's
-    price and silently discarding the other's. First-seen order is
-    preserved (both for which holding stays first, and for which fields a
-    solo, un-merged holding keeps)."""
-    order, merged = [], {}
+    positions for one issuer.
+
+    COST BASIS ON A MERGE. This used to null cost_per_share/cost_currency on
+    every row that got merged, unconditionally - on the theory that "two
+    lots at two different prices have no single cost basis". That is true
+    when the lots' prices genuinely differ, but when EVERY contributing row
+    carries a known cost in the SAME currency, the combined cost basis is
+    not a guess at all: (q1*c1 + q2*c2 + ...) / (q1+q2+...) is the exact
+    quantity-weighted average cost, the same arithmetic a broker statement
+    itself would show for the combined position. Discarding it destroyed
+    information this store actually had. The average is computed only when
+    the currency is not in question, so cost_per_share/cost_currency are
+    still cleared to None whenever any contributing row has no cost on file
+    at all (a genuine unknown - averaging in a "0" would understate cost),
+    or the rows disagree on currency (summing SEK and EUR figures into one
+    number would silently manufacture a value in neither currency). A solo,
+    un-merged holding is unaffected either way - its own cost survives
+    exactly as given. First-seen order is preserved (both for which holding
+    stays first, and for which fields a solo holding keeps)."""
+    order, merged, cost = [], {}, {}
     for h in holdings:
         key = h.get("lei") or h.get("isin") or (h.get("name") or "").lower()
+        qty = h.get("quantity") or 0
+        cps = h.get("cost_per_share")
+        ccy = h.get("cost_currency")
         if key not in merged:
             merged[key] = dict(h)
             order.append(key)
+            cost[key] = {"rows": 1,
+                        "weighted_sum": qty * cps if cps is not None else 0.0,
+                        "known": cps is not None, "currency": ccy,
+                        "currency_consistent": True}
         else:
             existing = merged[key]
-            existing["quantity"] = (existing.get("quantity") or 0) + (h.get("quantity") or 0)
-            existing["cost_per_share"] = None
-            existing["cost_currency"] = None
+            existing["quantity"] = (existing.get("quantity") or 0) + qty
+            state = cost[key]
+            state["rows"] += 1
+            if cps is None:
+                state["known"] = False
+            else:
+                if state["currency"] is None:
+                    state["currency"] = ccy
+                elif ccy != state["currency"]:
+                    state["currency_consistent"] = False
+                state["weighted_sum"] += qty * cps
+
+    for key in order:
+        state = cost[key]
+        if state["rows"] < 2:
+            # Solo, un-merged holding - never touch its cost fields, even to
+            # recompute an arithmetically-equivalent value: dividing back
+            # out what was just multiplied in risks float noise on a figure
+            # that was never in question.
+            continue
+        h = merged[key]
+        total_qty = h.get("quantity") or 0
+        if state["known"] and state["currency_consistent"] and total_qty:
+            h["cost_per_share"] = state["weighted_sum"] / total_qty
+            h["cost_currency"] = state["currency"]
+        else:
+            h["cost_per_share"] = None
+            h["cost_currency"] = None
     return [merged[k] for k in order]
 
 
@@ -886,6 +931,18 @@ def _cmd_add(args):
         holding = holdings[0]
 
     doc = load(args.name) or _new_doc(args.name)
+    # Re-adding an already-held name must UPDATE quantity/price without
+    # erasing an analyst-entered note, fair-value range or bear case -
+    # _merge_paste_with_prior already gives --paste exactly that guarantee.
+    # --add used to skip it and go straight to "drop the old row, append
+    # the new one": a fresh --add row has no way to invent a prior note or
+    # fair-value range, so every one of those fields silently reverted to
+    # null on every re-add. Routing through the SAME merge function as
+    # --paste means one set of "which fields survive" rules, not two that
+    # can drift apart - and --force's unresolved-holding case merges the
+    # same way, since it is just another kind of holding dict to that
+    # function.
+    holding = _merge_paste_with_prior(doc, [holding])[0]
     doc["holdings"] = [h for h in doc.get("holdings", [])
                        if (h.get("name") or "").lower() != holding["name"].lower()]
     doc["holdings"].append(holding)

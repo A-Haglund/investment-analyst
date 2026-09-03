@@ -65,6 +65,16 @@ try:
 except Exception:
     company_resolve = None
 
+# numparse.py (v3.0.0): the shared number parser - see parse_fi_number()
+# below, which now delegates to it. Loaded via _bootstrap.py rather than a
+# second inline spec_from_file_location block. Hard-required, unlike
+# company_resolve above: without it every FI Volume/Price field in this
+# file's output would silently read back as 0.0 rather than crash loudly,
+# which is worse.
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+import _bootstrap
+numparse = _bootstrap.load("numparse")
+
 BASE = "https://marknadssok.fi.se/publiceringsklient/en-GB/Search/Search"
 UA = "Mozilla/5.0 (compatible; investment-analyst-skill/1.0)"
 
@@ -129,37 +139,22 @@ def signed(x):
 # also appears, and so does a space-grouped one ("1 234,5"). The old
 # `.replace(",", ".")` read "1,000" as 1.0 - a silent thousandfold error -
 # and raised on "1 234,5", which was then swallowed into a silent 0.0.
-# mfn_news.py's to_number() draws the same distinction for MFN release text;
-# this mirrors it for FI's simpler format (no thousands-separator-AND-
-# decimal-point case, since FI never mixes the two conventions in one field).
-_THOUSANDS_COMMA = re.compile(r"^-?\d{1,3}(?:,\d{3})+$")
-_NUMBER_SPACES = (" ", " ", " ", " ")
-
+#
+# v3.0.0: this fix, mfn_news.py's to_number() (the same distinction for MFN
+# release text) and two more independent copies now live in one place,
+# numparse.py - see its module docstring for the full bug history.
+# parse_fi_number() below is a thin wrapper that keeps this file's own
+# (value, ok) return shape and its "blank field means 0.0, not a parse
+# failure" convention, both preserved exactly.
 
 def parse_fi_number(raw):
     """Parse one FI Volume/Price field. Returns (value, ok).
 
     ok is False when nothing could be parsed, so the caller can count and
-    report the failure rather than silently substituting 0.0.
+    report the failure rather than silently substituting 0.0. Delegates to
+    numparse.parse_fi_number(), which implements this exact contract.
     """
-    if raw is None:
-        return 0.0, True
-    cleaned = raw.strip()
-    if not cleaned:
-        return 0.0, True
-    for sp in _NUMBER_SPACES:
-        cleaned = cleaned.replace(sp, "")
-    if "," in cleaned:
-        # A comma followed by groups of exactly three digits is a thousands
-        # separator; one followed by one or two digits is a decimal comma.
-        if _THOUSANDS_COMMA.match(cleaned):
-            cleaned = cleaned.replace(",", "")
-        else:
-            cleaned = cleaned.replace(",", ".")
-    try:
-        return float(cleaned), True
-    except ValueError:
-        return 0.0, False
+    return numparse.parse_fi_number(raw)
 
 
 # ---------------------------------------------------------------- classifying

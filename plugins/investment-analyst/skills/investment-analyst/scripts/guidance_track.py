@@ -64,11 +64,13 @@ Usage:
 import argparse
 import collections
 import datetime
+import hashlib
 import html
 import json
 import os
 import re
 import sys
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -87,6 +89,7 @@ if _HERE not in sys.path:
 import mfn_news as MFN            # noqa: E402
 import cision_news as CIS         # noqa: E402
 import esef_fundamentals as ESEF  # noqa: E402
+import company_resolve as CR      # noqa: E402  -- LEI/ISIN identity, for the store only
 
 UA = "Mozilla/5.0 (compatible; investment-analyst-skill/1.0)"
 GUIDANCE_LABEL = "SINGLE SOURCE - MANAGEMENT GUIDANCE"
@@ -1829,6 +1832,595 @@ def print_execution(score, cut_patterns, definition_changes, sandbag, company):
 
 
 # ---------------------------------------------------------------------------
+# GUIDANCE STORE (v3.0.0)
+#
+# Everything above this line was already true before this store existed: it
+# reads whatever the current run could fetch and forgets it the moment the
+# process exits. That is a real defect, verified by a full read of this file
+# before writing a line of the store - there was no home directory, no
+# schema, nothing. Two consequences follow directly from that gap:
+#
+#   1. mfn_archive() reaches pre-2024 history only through an UNDOCUMENTED
+#      endpoint (/all/a.json?author=<slug>) that this file's own docstring
+#      dates "Verified 2026-08-31" - i.e. admits it could stop working with
+#      no warning. If it does, the fallback is the documented feed, which is
+#      hard-capped near 30 items and ignores offset. A run made on the day
+#      the deep endpoint breaks would silently see less history than a run
+#      made the day before, and nothing on screen would say so.
+#   2. cision_archive() is best-effort by construction - it only fetches
+#      bodies for releases that already look report-like or guidance-like,
+#      so a guidance sentence buried in an unrelated release is missed by
+#      design, not by bug.
+#
+# WHAT IS STORED, AND WHY THAT LIST AND NO OTHER. The governing rule is
+# "persist only what cannot be re-derived". judge()'s verdict (MET / MISS /
+# NOT COMPARABLE) is arithmetic on numbers this file can always re-fetch, so
+# it is never written to disk - see judge()'s own docstring, which calls this
+# "a fact", not a record. The guidance STATEMENT is the opposite: it lives in
+# one dated release, reached through the fragile paths above, and once that
+# release scrolls out of a shallow archive's ~30-item window the sentence is
+# gone for good, not merely stale. So the store keeps the statement, its
+# vintage (the release's own publication date, never the fetch date), its
+# basis (adjusted/organic vs as-stated), its channel and source URL, the
+# verbatim sentence, and whether it was period guidance or a standing
+# through-the-cycle target - the exact three-way separation this file's
+# module docstring insists on keeping intact. Everything else (actual,
+# verdict, verdict_why) is recomputed fresh every time from CURRENT filings,
+# by the SAME judge()/pick_actual() pipeline a freshly-scanned row goes
+# through - see stored_statement_to_history_row() and run()'s merge step.
+#
+# APPEND-ONLY, REVISION-LINKED. A prior statement is never edited or dropped;
+# a revised number is a NEW row, cross-linked to what it supersedes. This is
+# a deliberate departure from thesis_ledger.py, which truncates
+# status_history at 200 entries (`del thesis["status_history"][:-200]`) and
+# silently replaces a re-observed value in place - both are information
+# loss this store refuses to repeat. There is no cap on len(statements)
+# anywhere below.
+#
+# IDENTITY. Keyed on LEI first, ISIN second - the exact discipline
+# thesis_ledger.py's ledger_key() applies, for the exact same reason:
+# "Volvo" is two listed issuers with different management teams, and a store
+# keyed on a display name would silently merge their guidance histories.
+# A company with neither a LEI nor an ISIN anywhere in the Nordic registers
+# is refused, not stored under its typed name - see resolve_store_identity().
+# ---------------------------------------------------------------------------
+
+GUIDANCE_STORE_SCHEMA_VERSION = 1
+
+# Presence-based, exactly like thesis_ledger.ledger_key(): the VALUE of
+# identity["lei"]/["isin"] is trusted from the resolver that produced it
+# (company_resolve.py or esef_fundamentals' own filing index), not
+# re-validated against a checksum here.
+_STORE_KEY_RE = re.compile(r"^(LEI|ISIN)-[A-Za-z0-9]+$")
+
+
+def guidance_store_home():
+    """Root directory for the guidance store, overridable the same way
+    portfolio_store.py (PORTFOLIO_STORE_HOME) and thesis_ledger.py
+    (THESIS_LEDGER_HOME) already are - so the test suite never has to touch
+    a real ~/.investment-analyst."""
+    override = os.environ.get("GUIDANCE_STORE_HOME")
+    if override:
+        return os.path.abspath(override)
+    return os.path.join(os.path.expanduser("~"), ".investment-analyst", "guidance")
+
+
+def _now_iso():
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def guidance_store_key(identity):
+    """LEI first, ISIN second. Never the name - see the module note above.
+
+    Returns None (never raises) when neither is available, so callers can
+    print their own refusal with the query that produced it; run() and the
+    CLI both do this rather than let an exception cross a code path that
+    also has to keep working when the store is never touched at all.
+    """
+    ident = identity or {}
+    lei = ident.get("lei")
+    if lei and lei != CR.NA:
+        return "LEI-" + lei
+    isin = ident.get("isin")
+    if isin and isin != CR.NA:
+        return "ISIN-" + isin
+    return None
+
+
+def resolve_store_identity(label, query, country):
+    """LEI/ISIN identity for the guidance store. Two engines, in order:
+
+      1. company_resolve.py's full Nordic identity engine - the same brand
+         guard portfolio_store.py and thesis_ledger.py both build on, so
+         "Volvo" is refused here exactly as it is everywhere else in this
+         toolkit, with every candidate named.
+      2. esef_fundamentals.search_index() - the SAME lookup esef_actuals()
+         already performs a few lines below in run(), reused rather than
+         re-implemented, as a fallback for an issuer company_resolve cannot
+         place (a name form it does not recognise) but whose ESEF filings
+         are indexed under an unambiguous LEI.
+
+    Returns (identity_dict, note). identity_dict is None when refused; note
+    explains why and is always safe to print or fold into `notes`. This
+    never raises - a company with no clean identity must not abort a run
+    that only wanted to READ guidance, it must simply not be stored.
+    """
+    name = label or query
+    if not name:
+        return None, "DATA NOT AVAILABLE: no company name to resolve an identity for."
+    try:
+        rec = CR.resolve(name, country=country)
+        lei = rec.get("lei")
+        isin = rec.get("isin")
+        if (lei and lei != CR.NA) or (isin and isin != CR.NA):
+            return {"lei": lei if lei and lei != CR.NA else None,
+                    "isin": isin if isin and isin != CR.NA else None,
+                    "company_name": rec.get("company_name") or name,
+                    "legal_name": rec.get("legal_name")}, None
+    except CR.Ambiguous as exc:
+        cands = ", ".join(c.get("company_name", "?") for c in (exc.candidates or []))
+        return None, ("GUIDANCE_STORE_IDENTITY_AMBIGUOUS: %d distinct issuer(s) "
+                      "match %r (%s). Attributing a guidance record to the wrong "
+                      "one is silent and looks identical to a correct answer - "
+                      "nothing was stored; re-run with the exact legal name."
+                      % (len(exc.candidates or []), name, cands))
+    except CR.NotFound:
+        pass
+    except Exception:                                  # noqa: BLE001
+        pass  # a resolver outage degrades to the ESEF fallback, never aborts
+
+    try:
+        hits = ESEF.search_index(name, country)
+    except SystemExit:
+        hits = []
+    if len(hits) == 1:
+        h = hits[0]
+        return {"lei": h["lei"], "isin": None, "company_name": h["name"],
+                "legal_name": h["name"]}, None
+    if len(hits) > 1:
+        return None, ("GUIDANCE_STORE_IDENTITY_AMBIGUOUS: %d ESEF filers in %s "
+                      "match %r - nothing was stored." % (len(hits), country, name))
+    return None, ("DATA NOT AVAILABLE: no LEI or ISIN could be resolved for %r "
+                  "through company_resolve.py or the ESEF filing index. Storing "
+                  "guidance under a bare display name is exactly the failure mode "
+                  "this store exists to avoid, so nothing was written. Try the "
+                  "exact legal name, an ISIN or an LEI." % name)
+
+
+def _store_path(key):
+    if not _STORE_KEY_RE.match(key or ""):
+        raise ValueError("invalid guidance store key %r" % key)
+    return os.path.join(guidance_store_home(), key + ".json")
+
+
+def _guidance_index_path():
+    return os.path.join(guidance_store_home(), "index.json")
+
+
+def _write_json_atomic(path, obj):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(obj, fh, indent=2, ensure_ascii=False)
+    os.replace(tmp, path)          # atomic: a crash never leaves half a store file
+
+
+def _read_json(path):
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None
+
+
+def _new_guidance_doc(key, identity):
+    return {"schema_version": GUIDANCE_STORE_SCHEMA_VERSION, "store_key": key,
+            "identity": identity or {}, "aliases": [], "created": _now_iso(),
+            "last_updated": _now_iso(), "statements": [], "fetch_log": []}
+
+
+def guidance_store_load(key):
+    """The stored document for `key`, or None if nothing has been saved yet.
+
+    None, not {} (unlike portfolio_store.load()) - a caller here always has
+    to tell "no store yet" apart from "store exists but is empty", because
+    --stored-history and --revisions print a different message for each.
+    """
+    if not key:
+        return None
+    doc = _read_json(_store_path(key))
+    if doc is None:
+        return None
+    doc.setdefault("statements", [])
+    doc.setdefault("fetch_log", [])
+    doc.setdefault("aliases", [])
+    return doc
+
+
+def _guidance_read_index():
+    idx = _read_json(_guidance_index_path())
+    if not idx or idx.get("schema_version") != GUIDANCE_STORE_SCHEMA_VERSION:
+        idx = {"schema_version": GUIDANCE_STORE_SCHEMA_VERSION, "companies": {}}
+    return idx
+
+
+def _guidance_index_update(doc):
+    idx = _guidance_read_index()
+    ident = doc.get("identity") or {}
+    idx["companies"][doc["store_key"]] = {
+        "company_name": ident.get("company_name"), "lei": ident.get("lei"),
+        "isin": ident.get("isin"), "aliases": doc.get("aliases", []),
+        "statements": len(doc.get("statements") or []),
+        "last_updated": doc.get("last_updated")}
+    _write_json_atomic(_guidance_index_path(), idx)
+
+
+def guidance_store_save(doc):
+    """Write `doc` atomically (temp file + os.replace, matching
+    portfolio_store.save() and thesis_ledger._write_json()) and refresh the
+    alias index alongside it. Callers should reach the store through
+    guidance_store_merge() below, not this directly - this has no
+    idempotency or revision logic of its own."""
+    doc = dict(doc)
+    doc["schema_version"] = GUIDANCE_STORE_SCHEMA_VERSION
+    doc["last_updated"] = _now_iso()
+    _write_json_atomic(_store_path(doc["store_key"]), doc)
+    _guidance_index_update(doc)
+    return None
+
+
+def guidance_store_index_lookup(query):
+    """Offline alias lookup, so --stored-history/--revisions never have to
+    touch the network for a company already on file - the same shape as
+    thesis_ledger.index_lookup()."""
+    idx = _guidance_read_index()
+    q = (query or "").strip().lower()
+    if not q:
+        return None
+    for key, entry in idx["companies"].items():
+        if q == key.lower():
+            return key
+        for field in ("lei", "isin"):
+            if entry.get(field) and q == str(entry[field]).lower():
+                return key
+        if entry.get("company_name") and q == entry["company_name"].strip().lower():
+            return key
+        for alias in entry.get("aliases") or []:
+            if q == (alias or "").strip().lower():
+                return key
+    return None
+
+
+def _statement_id(source_url, metric, applies_to, sentence):
+    """Idempotency key for one guidance/target statement.
+
+    (source_url, metric, target period, verbatim sentence) pins a statement
+    to the one release or IR page that carried it. Re-running this script
+    over an UNCHANGED release reproduces the identical tuple every time -
+    same hash, same row, no duplicate; that is the whole idempotency
+    guarantee. A REVISED number lives in a different sentence (almost always
+    a different release too), so it always earns a new id and is linked as a
+    revision by guidance_store_merge() instead of overwriting anything. The
+    sentence is folded in, not just source_url+metric+period, because a
+    single report occasionally restates both a full-year guide and a
+    reiterated cycle target for the same metric in the same document - two
+    distinct promises that must not collide into one row.
+    """
+    h = hashlib.sha1()
+    for part in (source_url or "", metric or "", applies_to or "",
+                re.sub(r"\s+", " ", (sentence or "").strip().lower())):
+        h.update(part.encode("utf-8"))
+        h.update(b"\x1f")
+    return h.hexdigest()[:20]
+
+
+def _sort_date(stmt):
+    return stmt.get("vintage") or stmt.get("first_observed") or ""
+
+
+def _basis_label(adjusted_basis):
+    return ("adjusted/organic - not directly comparable to an IFRS-reported "
+            "figure" if adjusted_basis else
+            "as stated (comparable to an IFRS/ESEF figure where the metric "
+            "permits)")
+
+
+def guidance_row_to_statement(row, channel, archive_meta):
+    """One collapsed guidance-history row (collapse()'s output, post-join
+    with `_stmt_id`/`_from_store` attached by run()) -> a store record.
+
+    Drops exactly what judge() can re-derive (actual, verdict, verdict_why -
+    none of those three keys are read here even though `row` may carry
+    them); keeps exactly what a vanished MFN endpoint could otherwise take
+    with it: the promise, verbatim, dated to the release that carried it.
+    """
+    return {
+        "id": _statement_id(row.get("url"), row.get("metric"), row.get("applies_to"),
+                            row.get("sentence")),
+        "kind": "guidance",
+        "standing": row.get("applies_to") in STANDING_PERIODS,
+        "metric": row.get("metric"),
+        "quant": row.get("quant"),
+        "applies_to": row.get("applies_to"),
+        "period_inferred": bool(row.get("period_inferred")),
+        "withdrawn": bool(row.get("withdrawn")),
+        "adjusted_basis": bool(row.get("adjusted_basis")),
+        "basis_label": _basis_label(row.get("adjusted_basis")),
+        "vintage": row.get("first_said") or row.get("date"),
+        "reaffirmed_on": list(row.get("repeated_on") or []),
+        "source_url": row.get("url"),
+        "channel": channel,
+        "title": row.get("title"),
+        "sentence": row.get("sentence"),
+        "supersedes": None,
+        "superseded_by": None,
+        "archive_depth": dict(archive_meta or {}),
+        "stored_utc": _now_iso(),
+    }
+
+
+def target_row_to_statement(row, archive_meta):
+    """One standing-target row from crawl_targets()/scan_targets() -> a
+    store record. IR "financial targets" pages are undated live pages, not
+    archived releases, so there is no real publication date to record -
+    `vintage` is honestly left None rather than guessed, and
+    `first_observed` (this run's own date) is kept as a clearly separate
+    field so a reader can never mistake one for the other.
+    """
+    return {
+        "id": _statement_id(row.get("url"), row.get("metric"), row.get("horizon"),
+                            row.get("sentence")),
+        "kind": "target",
+        "standing": True,
+        "metric": row.get("metric"),
+        "quant": row.get("quant"),
+        "applies_to": row.get("horizon"),
+        "period_inferred": False,
+        "withdrawn": False,
+        "adjusted_basis": bool(row.get("adjusted_basis")),
+        "basis_label": _basis_label(row.get("adjusted_basis")),
+        "vintage": None,
+        "first_observed": _now_iso()[:10],
+        "reaffirmed_on": [],
+        "source_url": row.get("url"),
+        "channel": "IR",
+        "title": None,
+        "sentence": row.get("sentence"),
+        "supersedes": None,
+        "superseded_by": None,
+        "archive_depth": {"channel": "IR", "deep": None,
+                          "note": "IR pages are live, undated snapshots, not an "
+                                  "archive - archive-depth does not apply the way "
+                                  "it does to a release feed; only THIS crawl's "
+                                  "own findings are represented."},
+        "stored_utc": _now_iso(),
+    }
+
+
+def stored_statement_to_history_row(stmt):
+    """Stored guidance statement -> the row shape collapse() produces, so it
+    can rejoin the SAME pick_actual()/judge() pipeline a freshly-scanned row
+    goes through (see run()). Nothing about a stored verdict is trusted or
+    even read here - there isn't one on file; only the promise itself is
+    replayed against TODAY's actuals.
+    """
+    vintage = stmt.get("vintage") or stmt.get("first_observed") or ""
+    return {
+        "date": vintage, "metric": stmt.get("metric"), "quant": stmt.get("quant"),
+        "applies_to": stmt.get("applies_to"),
+        "period_inferred": bool(stmt.get("period_inferred")),
+        "withdrawn": bool(stmt.get("withdrawn")),
+        "adjusted_basis": bool(stmt.get("adjusted_basis")),
+        "retrospective": False, "title": stmt.get("title"),
+        "url": stmt.get("source_url"), "sentence": stmt.get("sentence"),
+        "kind": "guidance", "first_said": vintage,
+        "repeated_on": list(stmt.get("reaffirmed_on") or []),
+        "_stmt_id": stmt.get("id"), "_from_store": True,
+    }
+
+
+def guidance_store_merge(key, identity, alias, new_statements, fetch_meta):
+    """Append-only merge of `new_statements` into the store for `key`.
+
+    IDEMPOTENT: a statement whose id already exists on file is skipped -
+    this is what makes running the same, unchanged release twice a no-op
+    rather than a duplicate row (see _statement_id()'s docstring).
+
+    REVISION-AWARE, NEVER DESTRUCTIVE: a genuinely new statement that shares
+    (kind, metric, applies_to) with an already-stored one is linked to the
+    most recent prior statement in that slot - `supersedes` on the new row,
+    `superseded_by` on the old one. The old row's own content is never
+    edited, only that one cross-reference field is set on it; nothing is
+    deleted and nothing is capped. This is the deliberate opposite of
+    thesis_ledger.py's `del thesis["status_history"][:-200]` truncation and
+    its silent in-place value replacement - see the module note above.
+
+    `new_statements` is sorted by vintage before merging so a run that
+    itself introduces two links in one chain (rare, but possible when a
+    deep archive fetch reaches several years back in a single pass) links
+    them in the right order.
+    """
+    doc = guidance_store_load(key) or _new_guidance_doc(key, identity)
+    if identity:
+        doc["identity"] = identity   # refresh display fields only; the key itself never changes
+    if alias:
+        alias = alias.strip()
+        if alias and alias not in doc["aliases"]:
+            doc["aliases"].append(alias)
+
+    existing_ids = {s["id"] for s in doc["statements"]}
+    added, revised = 0, 0
+    for stmt in sorted(new_statements, key=lambda s: _sort_date(s) or ""):
+        if stmt["id"] in existing_ids:
+            continue
+        prior = None
+        for s in doc["statements"]:
+            if s["kind"] != stmt["kind"] or s["metric"] != stmt["metric"] \
+                    or s["applies_to"] != stmt["applies_to"]:
+                continue
+            if prior is None or (_sort_date(s) or "") > (_sort_date(prior) or ""):
+                prior = s
+        if prior is not None:
+            stmt["supersedes"] = prior["id"]
+            prior["superseded_by"] = stmt["id"]
+            revised += 1
+        doc["statements"].append(stmt)
+        existing_ids.add(stmt["id"])
+        added += 1
+
+    doc["fetch_log"].append(fetch_meta)
+    guidance_store_save(doc)
+    return doc, added, revised
+
+
+def _quant_mid(q):
+    if not q:
+        return None
+    if q.get("kind") == "range" and q.get("low") is not None and q.get("high") is not None:
+        return (q["low"] + q["high"]) / 2.0
+    return q.get("low") if q.get("low") is not None else q.get("high")
+
+
+def guidance_store_history_rows(doc):
+    """Every stored statement, newest vintage first, each annotated (when it
+    is itself a revision) with what it revises. A pure read - no verdict is
+    computed here; this is a record of what was SAID, not a re-scored
+    outcome (run the plain company query, optionally with --use-history, for
+    that).
+    """
+    stmts = list(doc.get("statements") or [])
+    by_id = {s["id"]: s for s in stmts}
+    rows = []
+    for s in sorted(stmts, key=lambda s: _sort_date(s) or "", reverse=True):
+        row = dict(s)
+        prior = by_id.get(s.get("supersedes"))
+        if prior:
+            row["revises_quant"] = quant_str(prior.get("quant"))
+        rows.append(row)
+    return rows
+
+
+def guidance_store_revision_chain(doc):
+    """Just the links: every statement that revises another, oldest first,
+    with the direction a plain number comparison cannot convey on its own
+    (a margin FLOOR going from 10% to 8% is a cut; a net-debt/EBITDA CEILING
+    going from 1.0x to 1.5x is also a cut - LOWER_IS_BETTER decides which
+    word applies, same table detect_changes() already uses).
+    """
+    by_id = {s["id"]: s for s in doc.get("statements") or []}
+    out = []
+    for s in doc.get("statements") or []:
+        prior = by_id.get(s.get("supersedes"))
+        if not prior:
+            continue
+        if s.get("withdrawn"):
+            direction = "WITHDRAWN"
+        else:
+            mid_a, mid_b = _quant_mid(prior.get("quant")), _quant_mid(s.get("quant"))
+            lower_better = s.get("metric") in LOWER_IS_BETTER
+            if mid_a is None or mid_b is None or mid_a == mid_b:
+                direction = "RESTATED"
+            elif mid_b < mid_a:
+                direction = "TIGHTENED" if lower_better else "LOWERED"
+            else:
+                direction = "LOOSENED" if lower_better else "RAISED"
+        out.append({"metric": s.get("metric"), "applies_to": s.get("applies_to"),
+                    "from": quant_str(prior.get("quant")), "to": quant_str(s.get("quant")),
+                    "from_vintage": _sort_date(prior), "to_vintage": _sort_date(s),
+                    "direction": direction, "from_url": prior.get("source_url"),
+                    "to_url": s.get("source_url")})
+    return sorted(out, key=lambda c: c["to_vintage"] or "")
+
+
+def print_guidance_store_history(doc, company):
+    print(BAR)
+    print("STORED GUIDANCE HISTORY - %s" % (company or doc.get("store_key")))
+    print(BAR)
+    print("store key: %s   |   %d statement(s) on file   |   last updated %s"
+          % (doc["store_key"], len(doc.get("statements") or []), doc.get("last_updated")))
+    if any(fl.get("deep_archive") is False for fl in doc.get("fetch_log") or []):
+        print()
+        print("CAVEAT: at least one fetch behind this history used a SHALLOW "
+              "release feed (the ~30 most recent releases, or a best-effort "
+              "Cision crawl). Absence of guidance before that fetch's own date "
+              "range is NOT evidence none was given - see the fetch log below.")
+    print()
+    for row in guidance_store_history_rows(doc):
+        tag = " [WITHDRAWN]" if row.get("withdrawn") else ""
+        rev = "  (revises %s)" % row["revises_quant"] if row.get("revises_quant") else ""
+        print("  %-10s  %-24s %-14s applies to %-20s%s%s"
+              % (row.get("vintage") or row.get("first_observed") or "?",
+                 METRIC_LABEL.get(row["metric"], row["metric"]), quant_str(row["quant"]),
+                 row["applies_to"], tag, rev))
+        print("      kind : %s%s" % (row["kind"], " (standing)" if row.get("standing") else ""))
+        print("      basis: %s" % row["basis_label"])
+        print("      src  : [%s] %s" % (row["channel"], row["source_url"]))
+        print("      raw  : \"%s\"" % (row.get("sentence") or "")[:170])
+        if (row.get("archive_depth") or {}).get("deep") is False:
+            print("      NOTE : %s" % row["archive_depth"].get("note"))
+        print()
+    print("FETCH LOG (%d run(s)):" % len(doc.get("fetch_log") or []))
+    for fl in doc.get("fetch_log") or []:
+        print("  %s  venue=%-8s deep_archive=%-5s releases=%s  %s"
+              % (str(fl.get("run_utc"))[:19], fl.get("venue"), fl.get("deep_archive"),
+                 fl.get("releases_scanned"), fl.get("archive_note") or ""))
+    print()
+
+
+def print_guidance_revisions(doc, company):
+    print(BAR)
+    print("GUIDANCE REVISION CHAIN - %s" % (company or doc.get("store_key")))
+    print(BAR)
+    chain = guidance_store_revision_chain(doc)
+    if not chain:
+        print("No revisions on file for this issuer - every stored statement is "
+              "either a first statement or a plain reiteration of one already "
+              "seen (a reiteration is never filed as a revision).")
+        return
+    for c in chain:
+        print("  %s -> %s   [%s]   %s / %s"
+              % (c["from_vintage"], c["to_vintage"], c["direction"],
+                 METRIC_LABEL.get(c["metric"], c["metric"]), c["applies_to"]))
+        print("      %s  ->  %s" % (c["from"], c["to"]))
+        print("      from: %s" % c["from_url"])
+        print("      to  : %s" % c["to_url"])
+        print()
+
+
+def _execution_score_with_coverage(execution_score, history, store_key):
+    """Non-destructively add a 'coverage_statement' fact disclosing how many
+    of the scored promises came from stored history vs. this run's own
+    fetch - a standalone function (rather than inline in run()) precisely so
+    it can be unit-tested offline, with a synthetic `history`, without
+    running the network-dependent pipeline that builds one for real.
+
+    compute_execution_score()'s formula, inputs and return shape are never
+    touched - this is called AFTER it, on its already-finished output, and
+    only from run() when --use-history was passed. A caller that never
+    engages the feature never sees this key at all, which is what keeps the
+    score's default output byte-identical to before this store existed.
+    """
+    scored_all = [r for r in history if r["verdict"].startswith(("MET", "BEAT", "MISS"))]
+    scored_from_store = [r for r in scored_all if r.get("_from_store")]
+    said_dates = [r["first_said"] for r in history if r.get("first_said")]
+    years = 0.0
+    if len(said_dates) >= 2:
+        try:
+            d0 = datetime.date.fromisoformat(min(said_dates)[:10])
+            d1 = datetime.date.fromisoformat(max(said_dates)[:10])
+            years = (d1 - d0).days / 365.25
+        except ValueError:
+            years = 0.0
+    out = dict(execution_score)
+    out["facts"] = dict(out["facts"])
+    out["facts"]["coverage_statement"] = (
+        "scored on %d statement(s) over %.1f year(s), of which %d from stored "
+        "history (store key %s)" % (len(scored_all), years, len(scored_from_store),
+                                    store_key or "n/a"))
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
 
@@ -1907,7 +2499,8 @@ def resolve_company(name):
     return None, None, None, None
 
 
-def run(name, do_ir=True, esef_country="SE", limit_releases=500):
+def run(name, do_ir=True, esef_country="SE", limit_releases=500,
+       use_stored_history=False, save_to_store=False):
     notes = []
     venue, slug, label, resolve_note = resolve_company(name)
     if not slug:
@@ -1920,10 +2513,24 @@ def run(name, do_ir=True, esef_country="SE", limit_releases=500):
         items, note = mfn_archive(slug, want=limit_releases)
         if note:
             notes.append(note)
+        # The archive-depth caveat travels with every statement stored from
+        # this run (see guidance_row_to_statement()) - deep=False means the
+        # ~30-item shallow feed was used, and absence of older guidance in
+        # that case is a feed limitation, not evidence none was given.
+        archive_meta = {"channel": "MFN", "deep": not bool(note),
+                        "note": note or ("MFN /all/a.json deep archive worked for "
+                                         "this run; up to %d releases were "
+                                         "requested." % limit_releases)}
     else:
         items = cision_archive(slug)
         notes.append("Cision issuer: only report-like releases were fetched for "
                      "their body text, and Cision publishes no regulatory tag.")
+        archive_meta = {"channel": "Cision", "deep": False,
+                        "note": ("Cision archive is inherently best-effort: only "
+                                 "report-like releases have their body fetched, so "
+                                 "a guidance statement buried in an unrelated "
+                                 "release can be missed. Absence here is a coverage "
+                                 "limit, not evidence none was given.")}
     if not items:
         return None, ["DATA NOT AVAILABLE: no releases retrieved for %s (%s/%s)."
                       % (label, venue, slug)]
@@ -1956,6 +2563,45 @@ def run(name, do_ir=True, esef_country="SE", limit_releases=500):
                     bucket.setdefault(k, v)
 
     history = collapse(guidance_rows)
+    for r in history:
+        r["_stmt_id"] = _statement_id(r.get("url"), r.get("metric"), r.get("applies_to"),
+                                      r.get("sentence"))
+        r["_from_store"] = False
+
+    # --- identity + stored guidance history (guidance store, v3.0.0) -------
+    # Resolving identity costs a network round trip, so it only happens when
+    # a caller actually asked to read from or write to the store - a plain
+    # `guidance_track.py "Sandvik"` run touches none of this and behaves
+    # exactly as it did before the store existed.
+    store_identity, store_identity_note, store_key = None, None, None
+    stored_merged = 0
+    if use_stored_history or save_to_store:
+        store_identity, store_identity_note = resolve_store_identity(
+            label, name, esef_country)
+        store_key = guidance_store_key(store_identity) if store_identity else None
+        if store_identity_note:
+            notes.append(store_identity_note)
+    if use_stored_history and store_key:
+        stored_doc = guidance_store_load(store_key)
+        if stored_doc:
+            seen_ids = {r["_stmt_id"] for r in history}
+            for s in stored_doc.get("statements") or []:
+                if s.get("kind") != "guidance":
+                    continue          # standing targets do not feed the join/score below
+                row = stored_statement_to_history_row(s)
+                if row["_stmt_id"] in seen_ids:
+                    continue          # already present from this run's own fetch
+                history.append(row)
+                seen_ids.add(row["_stmt_id"])
+                stored_merged += 1
+            if stored_merged:
+                notes.append(
+                    "Stored guidance history folded into the join/score below: "
+                    "%d statement(s) from the guidance store (key %s) that this "
+                    "run's own fetch did not (re-)surface. Their verdicts are "
+                    "recomputed fresh against CURRENT actuals, never read back "
+                    "from the store - see --stored-history for the raw record "
+                    "with revision links." % (stored_merged, store_key))
 
     # --- standing targets from the IR site
     targets, ir_note = [], "IR-site crawl skipped (--no-ir)."
@@ -2036,6 +2682,16 @@ def run(name, do_ir=True, esef_country="SE", limit_releases=500):
     sandbagging = detect_sandbagging(history)
     execution_score = compute_execution_score(history, changes, definition_changes,
                                               cut_patterns, sandbagging)
+
+    # compute_execution_score()'s own formula, inputs and output shape are
+    # untouched above - _execution_score_with_coverage() only ADDS a
+    # disclosure line, and only when --use-history actually engaged, so a
+    # caller who never passes it sees byte-identical scores to before this
+    # store existed. "Never silently change what a score means": if the
+    # history feature changed this number, that fact is printed, not implied.
+    if use_stored_history:
+        execution_score = _execution_score_with_coverage(execution_score, history, store_key)
+
     structured_history = build_structured_history(history, changes)
 
     result = {
@@ -2057,14 +2713,218 @@ def run(name, do_ir=True, esef_country="SE", limit_releases=500):
         "execution_score": execution_score,
         "notes": notes,
         "disclaimer": GUIDANCE_LABEL,
+        "store_identity": store_identity,
+        "store_key": store_key,
+        "store_identity_note": store_identity_note,
+        "store_archive_meta": archive_meta,
+        "store_history_used": use_stored_history,
+        "store_history_merged_count": stored_merged,
     }
     return result, notes
+
+
+def _cli_store_save(result, query):
+    """--save/--store: persist what THIS run extracted (never what a prior
+    --use-history merge pulled back in - see the `_from_store` guard below,
+    which is exactly the flag run() set on merged-in rows)."""
+    key = result.get("store_key")
+    if not key:
+        print(result.get("store_identity_note") or
+              ("GUIDANCE NOT STORED: no LEI or ISIN could be resolved for %r - "
+               "storing under a display name risks merging two issuers, so "
+               "nothing was written." % query))
+        return
+    archive_meta = result["store_archive_meta"]
+    statements = [guidance_row_to_statement(row, result["venue"], archive_meta)
+                 for row in result["guidance_history"] if not row.get("_from_store")]
+    statements += [target_row_to_statement(row, archive_meta)
+                  for row in result["standing_targets"]]
+    fetch_meta = {"run_utc": result["retrieved_utc"], "venue": result["venue"],
+                 "slug": result["slug"], "releases_scanned": result["releases_scanned"],
+                 "date_range": result["date_range"], "deep_archive": archive_meta.get("deep"),
+                 "archive_note": archive_meta.get("note"),
+                 "ir_domains_tried": result["ir_domains_tried"], "ir_note": result["ir_note"]}
+    doc, added, revised = guidance_store_merge(
+        key, result.get("store_identity"), result["company"] or query, statements, fetch_meta)
+    print(BAR)
+    print("GUIDANCE STORE")
+    print(BAR)
+    print("store key %s: %d new statement(s) saved (%d of them linked as a "
+          "revision of a prior statement), %d already on file unchanged."
+          % (key, added, revised, len(statements) - added))
+    print("%d statement(s) on file in total for this issuer." % len(doc["statements"]))
+    print()
+
+
+def _cli_store_read(args):
+    """--stored-history / --revisions: read-only, and offline whenever the
+    company is already in the store's alias index - only a company never
+    seen before falls through to a live identity resolution (still no
+    guidance re-fetch: this never touches MFN/Cision/ESEF)."""
+    key = guidance_store_index_lookup(args.company)
+    note = None
+    if not key:
+        identity, note = resolve_store_identity(None, args.company, args.country)
+        key = guidance_store_key(identity) if identity else None
+    if not key:
+        print(note or ("DATA NOT AVAILABLE: no LEI or ISIN could be resolved for "
+                       "%r, so no guidance store entry could exist under any "
+                       "name for it." % args.company))
+        raise SystemExit(1)
+    doc = guidance_store_load(key)
+    if not doc:
+        print("No stored guidance history for %r (identity key %s). Run a plain "
+              "query with --save first to start one." % (args.company, key))
+        raise SystemExit(1)
+    company_label = (doc.get("identity") or {}).get("company_name") or args.company
+    if args.as_json:
+        payload = (guidance_store_revision_chain(doc) if args.revisions
+                  else guidance_store_history_rows(doc))
+        print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
+        return
+    if args.revisions:
+        print_guidance_revisions(doc, company_label)
+    else:
+        print_guidance_store_history(doc, company_label)
+
+
+def _selftest():
+    """Offline assertions for the guidance store added in v3.0.0. Extraction
+    (scan_guidance/scan_targets/judge/...) has its own, much larger,
+    coverage in tests/test_guidance_store.py and the rest of the suite; this
+    is deliberately narrow - the store's own persistence contract, run
+    through `python guidance_track.py --selftest` with no network and no
+    real ~/.investment-analyst touched.
+    """
+    ok = 0
+
+    # --- idempotency key: stable across calls, sensitive to content --------
+    a = _statement_id("https://mfn.se/a/x/1", "ebitda_margin", "FY2025", "We expect 66-68%.")
+    b = _statement_id("https://mfn.se/a/x/1", "ebitda_margin", "FY2025", "We expect 66-68%.")
+    c = _statement_id("https://mfn.se/a/x/1", "ebitda_margin", "FY2025", "We expect 70-72%.")
+    assert a == b and a != c
+    ok += 2
+
+    # --- identity: LEI first, ISIN second, name-only refused ---------------
+    assert guidance_store_key({"lei": "5493004QAI1UOX9SR347"}) == "LEI-5493004QAI1UOX9SR347"
+    assert guidance_store_key({"lei": None, "isin": "SE0000667891"}) == "ISIN-SE0000667891"
+    assert guidance_store_key({"company_name": "Some Co"}) is None
+    assert guidance_store_key(None) is None
+    ok += 4
+
+    with tempfile.TemporaryDirectory() as tmp:
+        old = os.environ.get("GUIDANCE_STORE_HOME")
+        os.environ["GUIDANCE_STORE_HOME"] = tmp
+        try:
+            key = "LEI-5493004QAI1UOX9SR347"
+            ident = {"lei": "5493004QAI1UOX9SR347", "isin": "SE0000667891",
+                     "company_name": "Sandvik AB", "legal_name": "Sandvik Aktiebolag"}
+            row = {"date": "2025-07-17", "first_said": "2025-07-17", "metric": "ebitda_margin",
+                   "quant": {"kind": "range", "low": 66.0, "high": 68.0, "unit": "%"},
+                   "applies_to": "FY2025", "period_inferred": False, "withdrawn": False,
+                   "adjusted_basis": True, "title": "Q2 2025 report",
+                   "url": "https://mfn.se/a/sandvik/q2-2025", "sentence": "We expect 66-68%.",
+                   "repeated_on": []}
+            archive_meta = {"channel": "MFN", "deep": True, "note": ""}
+            stmt = guidance_row_to_statement(row, "MFN", archive_meta)
+
+            # save() -> load() round trip
+            doc, added, revised = guidance_store_merge(
+                key, ident, "Sandvik", [stmt], {"run_utc": "2025-07-17T00:00:00Z",
+                                                "venue": "MFN", "deep_archive": True})
+            assert added == 1 and revised == 0
+            back = guidance_store_load(key)
+            assert back is not None and len(back["statements"]) == 1
+            assert back["statements"][0]["adjusted_basis"] is True
+            assert back["statements"][0]["basis_label"].startswith("adjusted")
+            ok += 5
+
+            # idempotent: the SAME release merged again adds nothing
+            doc2, added2, revised2 = guidance_store_merge(
+                key, ident, "Sandvik", [stmt], {"run_utc": "2025-08-01T00:00:00Z",
+                                                "venue": "MFN", "deep_archive": True})
+            assert added2 == 0 and len(doc2["statements"]) == 1
+            ok += 1
+
+            # a revision: same metric/period, different number, appended -
+            # the original stays retrievable, both ends of the link are set
+            row2 = dict(row, quant={"kind": "range", "low": 63.0, "high": 65.0, "unit": "%"},
+                       first_said="2025-10-20", date="2025-10-20",
+                       url="https://mfn.se/a/sandvik/q3-2025",
+                       sentence="We now expect 63-65%, a cut from our previous guidance.")
+            stmt2 = guidance_row_to_statement(row2, "MFN", archive_meta)
+            doc3, added3, revised3 = guidance_store_merge(
+                key, ident, "Sandvik", [stmt2], {"run_utc": "2025-10-20T00:00:00Z",
+                                                 "venue": "MFN", "deep_archive": True})
+            assert added3 == 1 and revised3 == 1
+            assert len(doc3["statements"]) == 2      # nothing overwritten, nothing dropped
+            old_row = [s for s in doc3["statements"] if s["id"] == stmt["id"]][0]
+            new_row = [s for s in doc3["statements"] if s["id"] == stmt2["id"]][0]
+            assert old_row["superseded_by"] == new_row["id"]
+            assert new_row["supersedes"] == old_row["id"]
+            chain = guidance_store_revision_chain(doc3)
+            assert len(chain) == 1 and chain[0]["direction"] == "LOWERED"
+            ok += 5
+
+            # no truncation at any bound - append 250 distinct statements and
+            # confirm every one of them (thesis_ledger caps status_history at
+            # 200; this store must not repeat that defect)
+            many = []
+            for i in range(250):
+                r = dict(row, applies_to="FY%d" % (1900 + i), first_said="2020-01-01",
+                         date="2020-01-01", url="https://mfn.se/a/sandvik/bulk-%d" % i,
+                         sentence="bulk guidance statement number %d" % i)
+                many.append(guidance_row_to_statement(r, "MFN", archive_meta))
+            doc4, added4, _ = guidance_store_merge(
+                key, ident, "Sandvik", many, {"run_utc": "2026-01-01T00:00:00Z",
+                                              "venue": "MFN", "deep_archive": True})
+            assert added4 == 250
+            assert len(doc4["statements"]) == 2 + 250
+            ok += 2
+
+            # shallow-archive caveat is recorded and surfaced
+            shallow_meta = {"channel": "MFN", "deep": False,
+                            "note": "MFN deep archive unavailable; only the ~30 "
+                                    "most recent releases were read."}
+            shallow_row = dict(row, applies_to="FY2030", first_said="2030-01-01",
+                              date="2030-01-01", url="https://mfn.se/a/sandvik/shallow",
+                              sentence="shallow-fetch guidance statement")
+            shallow_stmt = guidance_row_to_statement(shallow_row, "MFN", shallow_meta)
+            doc5, _, _ = guidance_store_merge(
+                key, ident, "Sandvik", [shallow_stmt],
+                {"run_utc": "2030-01-01T00:00:00Z", "venue": "MFN", "deep_archive": False,
+                 "archive_note": shallow_meta["note"]})
+            found = [s for s in doc5["statements"] if s["id"] == shallow_stmt["id"]][0]
+            assert found["archive_depth"]["deep"] is False
+            assert any(fl.get("deep_archive") is False for fl in doc5["fetch_log"])
+            ok += 2
+
+            # load() of a company never saved returns None, not {} or a crash
+            assert guidance_store_load("LEI-00000000000000000000") is None
+            ok += 1
+        finally:
+            if old is None:
+                os.environ.pop("GUIDANCE_STORE_HOME", None)
+            else:
+                os.environ["GUIDANCE_STORE_HOME"] = old
+
+    # --- execution score is untouched when the feature is never engaged ---
+    # compute_execution_score() itself takes no store-related argument at
+    # all (see the call in run()); the disclosure line is added by run()
+    # ONLY when use_stored_history=True, so a caller that never asked for it
+    # gets the exact facts dict compute_execution_score() always produced.
+    empty = compute_execution_score([], [], [], [], [])
+    assert "coverage_statement" not in empty["facts"]
+    ok += 1
+
+    print("guidance_track selftest: %d assertions passed" % ok)
+    return 0
 
 
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("company", help="company name, e.g. \"Sandvik\"")
+    ap.add_argument("company", nargs="?", help="company name, e.g. \"Sandvik\"")
     ap.add_argument("--targets", action="store_true",
                     help="only the standing financial targets")
     ap.add_argument("--history", action="store_true",
@@ -2078,14 +2938,47 @@ def main():
                     help="ISO-2 country for the ESEF lookup (default SE)")
     ap.add_argument("--releases", type=int, default=500,
                     help="how many MFN releases to pull (default 500)")
+    ap.add_argument("--save", "--store", dest="save_history", action="store_true",
+                    help="persist this run's extracted guidance/targets to the "
+                         "guidance store (~/.investment-analyst/guidance)")
+    ap.add_argument("--use-history", action="store_true",
+                    help="fold previously stored guidance into this run's join "
+                         "and management execution score (disclosed in the "
+                         "output as 'coverage_statement'); off by default so a "
+                         "plain run's score never silently changes")
+    ap.add_argument("--stored-history", action="store_true",
+                    help="print the STORED guidance record for this company over "
+                         "time, newest first - no live fetch, offline when the "
+                         "company is already on file")
+    ap.add_argument("--revisions", action="store_true",
+                    help="print just the stored revision chain for this company "
+                         "- no live fetch")
+    ap.add_argument("--selftest", action="store_true",
+                    help="offline self-test of the guidance store; touches "
+                         "neither the network nor the real store")
     args = ap.parse_args()
 
+    if args.selftest:
+        raise SystemExit(_selftest())
+
+    if not args.company:
+        ap.error("give a company name, or use --selftest")
+
+    if args.stored_history or args.revisions:
+        _cli_store_read(args)
+        return
+
     result, notes = run(args.company, do_ir=not args.no_ir,
-                        esef_country=args.country, limit_releases=args.releases)
+                        esef_country=args.country, limit_releases=args.releases,
+                        use_stored_history=args.use_history,
+                        save_to_store=args.save_history)
     if result is None:
         for n in notes:
             print(n)
         raise SystemExit(1)
+
+    if args.save_history:
+        _cli_store_save(result, args.company)
 
     if args.as_json:
         print(json.dumps(result, indent=2, ensure_ascii=False, default=str))

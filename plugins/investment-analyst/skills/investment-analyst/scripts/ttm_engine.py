@@ -110,6 +110,11 @@ Verification = finfact.Verification
 Mode = finfact.Mode
 corroborate = finfact.corroborate
 
+# numparse.py (v3.0.0): the shared number parser. See parse_number() below,
+# which now delegates to it, for why this file no longer keeps its own copy
+# of the parsing logic.
+numparse = _load("numparse")
+
 _mfn = None
 _cision = None
 _esef = None
@@ -259,6 +264,14 @@ def fy_end_for_label(year, fye_md):
 # normalise_minus) - unnormalised, a negative EBITDA parses as positive with
 # no warning, and the sign-change sanity check in _finish explicitly declines
 # to flag it because a real swing to profit looks identical.
+#
+# v3.0.0: this algorithm now lives in numparse.py, the union of this file's
+# parse_number(), mfn_news.to_number(), insider_se.parse_fi_number() and
+# corporate_actions._to_int() - see numparse.py's module docstring for the
+# full bug history. parse_number() below is now a one-line delegation, kept
+# for its existing callers in this file. MINUS_CHARS_RE and NUM stay here:
+# both are still used directly by this file's own FIGURE_RE-style
+# extraction regexes below, not only by parse_number().
 # ==========================================================================
 
 MINUS_CHARS_RE = re.compile("[−–—‐‑‒]")
@@ -267,53 +280,13 @@ NUM = r"-?[\s ]?\d[\d   ]*(?:[.,]\d+(?:[.,]\d+)?)?"
 
 
 def parse_number(raw):
-    """Return (value, truncated). `truncated` means trailing junk was dropped."""
-    if raw is None:
-        return None, False
-    s = raw.replace(" ", " ").replace(" ", " ").strip()
-    s = MINUS_CHARS_RE.sub("-", s)
-    negative = s.startswith("-")
-    s = s.lstrip("-").strip()
-    m = re.match(r"\d+", s)
-    if not m:
-        return None, False
-    integer = m.group(0)
-    pos = m.end()
-    truncated = False
-    decimal = None
+    """Return (value, truncated). `truncated` means trailing junk was dropped.
 
-    # Space-grouped thousands, strictly three digits per group.
-    while pos < len(s) and s[pos] == " ":
-        nxt = re.match(r"\d+", s[pos + 1:])
-        if not nxt:
-            break
-        if len(nxt.group(0)) != 3:
-            truncated = True          # footnote marker or an adjacent number
-            break
-        integer += nxt.group(0)
-        pos += 1 + nxt.end()
-
-    rest = s[pos:]
-    seps = re.findall(r"[.,](?=\d)", rest)
-    if seps:
-        groups = re.findall(r"[.,](\d+)", rest)
-        if len({c for c in seps}) > 1:
-            # Both separators present: the LAST one is the decimal point.
-            last = rest.rfind(seps[-1])
-            integer += re.sub(r"[.,]", "", rest[:last])
-            decimal = re.sub(r"\D", "", rest[last:])
-        elif len(seps) > 1:
-            integer += "".join(groups)          # repeated separator = thousands
-        elif len(groups[0]) == 3 and len(integer) <= 3:
-            integer += groups[0]                # "37,799" - thousands
-        else:
-            decimal = groups[0]                 # "16,6" / "3.35" - decimal
-
-    try:
-        value = float(integer + ("." + decimal if decimal else ""))
-    except ValueError:
-        return None, truncated
-    return (-value if negative else value), truncated
+    Delegates to numparse.parse_number() - see this file's v3.0.0 comment
+    above and numparse.py's module docstring for the bug history this
+    consolidates.
+    """
+    return numparse.parse_number(raw)
 
 
 # ==========================================================================

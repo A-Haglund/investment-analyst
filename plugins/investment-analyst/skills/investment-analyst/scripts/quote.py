@@ -15,11 +15,38 @@ Coverage: any ticker Yahoo Finance's chart endpoint carries a quote for -
 in practice European (Nordic/French) venues. US issuers are out of scope for
 this toolkit; the Nasdaq (api.nasdaq.com) US-listings cross-check that used
 to run alongside Yahoo for bare US tickers has been removed rather than left
-as dead code that nothing calls.
+as dead code that nothing calls (see fetch_price()'s history in
+portfolio_metrics.py for the concrete defect that left behind).
+
+TWO-SOURCE CROSS-CHECK. Price is now single-source (Yahoo, an unofficial
+endpoint) unless a second, genuinely independent source can be reached, and
+every multiple this toolkit computes divides by this figure - a bad price
+here is not a cosmetic error, it is a bad valuation everywhere downstream.
+For a Nasdaq Nordic ticker (.ST/.HE/.CO/.IC), cross_check() corroborates
+Yahoo's price against nordic_shares.py's own Nasdaq Nordic reference data -
+a real second source (Nasdaq's own venue feed), not a Yahoo mirror. Three
+outcomes, never collapsed into each other:
+
+    CROSS-CHECKED   both sources agree within CROSS_CHECK_TOLERANCE.
+    CONFLICT        the sources disagree beyond tolerance, OR report
+                    different currencies for the same line (a currency
+                    mismatch means the two sources are not even pricing the
+                    same instrument, which is worse than a price gap and is
+                    never averaged away). Reported, never silently resolved
+                    - this module does not guess which source is right.
+    not checked     the ticker's suffix is outside Nasdaq Nordic's markets,
+                    no matching listing was found, or Nasdaq Nordic could
+                    not be reached. This is NOT folded into a clean
+                    CROSS-CHECKED result (that would overstate confidence)
+                    and NOT reported as a CONFLICT either (nothing was
+                    actually compared) - it is its own, honestly-labelled
+                    outcome, and every caller can see it happened.
 """
 import argparse
 import datetime
+import importlib.util
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
@@ -75,6 +102,156 @@ def from_yahoo(symbol):
     }
 
 
+# --------------------------------------------------------------------------
+# Second source: Nasdaq Nordic, via nordic_shares.py (owned by a different
+# agent - read, never edited, from here). Lazily loaded and swappable, the
+# same idiom portfolio_store.py uses for company_resolve.py: a Nordic-only
+# ticker cross-check has no business paying nordic_shares.py's import cost
+# (which pulls in urllib work of its own) for a caller pricing a non-Nordic
+# name, and tests need to swap in a fake without touching the real module.
+# --------------------------------------------------------------------------
+HERE = os.path.dirname(os.path.abspath(__file__))
+_NORDIC_MODULE = None
+
+
+def _nordic_shares():
+    global _NORDIC_MODULE
+    if _NORDIC_MODULE is None:
+        spec = importlib.util.spec_from_file_location(
+            "nordic_shares", os.path.join(HERE, "nordic_shares.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _NORDIC_MODULE = mod
+    return _NORDIC_MODULE
+
+
+# Nasdaq Nordic's markets (Stockholm, Helsinki, Copenhagen, Iceland) are what
+# nordic_shares.py's /search endpoint actually covers - NOT Oslo (.OL), which
+# is Euronext, not Nasdaq, and NOT Paris (.PA) or any other venue Yahoo also
+# happens to serve. A suffix outside this set must degrade to "not checked",
+# never silently skip the check while implying one ran.
+NORDIC_YAHOO_SUFFIXES = (".ST", ".HE", ".CO", ".IC")
+
+
+def _nordic_symbol_from_yahoo(symbol):
+    """"VOLV-B.ST" -> "VOLV B", "EVO.ST" -> "EVO", "NOVO-B.CO" -> "NOVO B".
+
+    Yahoo spells a share class with a hyphen where Nasdaq Nordic's own
+    listings (nordic_shares.py's `symbol` field) use a plain space; both put
+    the venue in a suffix Nasdaq Nordic's search does not expect at all.
+    Returns None for any ticker whose suffix is not one of
+    NORDIC_YAHOO_SUFFIXES - the caller must treat that as "cannot check",
+    never guess at a mapping outside these markets."""
+    upper = (symbol or "").upper()
+    for suf in NORDIC_YAHOO_SUFFIXES:
+        if upper.endswith(suf):
+            base = symbol[: -len(suf)]
+            return base.replace("-", " ").strip().upper()
+    return None
+
+
+def from_nordic(symbol):
+    """Independent second source for a Nordic ticker, or None.
+
+    None means "this did not run", for any of several reasons that all get
+    the same treatment from cross_check() (a "not checked" status, never a
+    guess): `symbol`'s suffix is outside Nasdaq Nordic's markets, nothing in
+    a search for its root ticker matched the exact class, or the request to
+    Nasdaq Nordic itself failed. nordic_shares.py's own api() raises
+    SystemExit on an unreachable endpoint - caught here rather than left to
+    kill the whole quote lookup, exactly like portfolio_metrics.fetch_sector
+    already treats the same module's failures."""
+    nordic_symbol = _nordic_symbol_from_yahoo(symbol)
+    if nordic_symbol is None:
+        return None
+    try:
+        ns = _nordic_shares()
+    except (Exception, SystemExit):
+        return None
+
+    query = nordic_symbol.split(" ")[0]
+    try:
+        rows = ns.search(query) or []
+    except (Exception, SystemExit):
+        return None
+
+    match = next((r for r in rows
+                 if (r.get("symbol") or "").upper() == nordic_symbol), None)
+    if match is None:
+        # A class-less listing (e.g. "NOKIA", no trailing letter) never
+        # equals nordic_symbol outright when nordic_symbol itself carries no
+        # class either - root_symbol() is a no-op for those, so this still
+        # only matches a genuine same-root line, never a different class.
+        match = next((r for r in rows if ns.root_symbol(
+            (r.get("symbol") or "").upper()) == nordic_symbol), None)
+    if match is None or not match.get("orderbookId"):
+        return None
+
+    try:
+        q = ns.quote(match["orderbookId"])
+    except (Exception, SystemExit):
+        return None
+    if q.get("last") is None:
+        return None
+
+    return {"source": "Nasdaq Nordic (nordic_shares.py)",
+            "symbol": match.get("symbol"), "isin": match.get("isin"),
+            "price": q.get("last"), "currency": q.get("currency"),
+            "as_of": q.get("as_of")}
+
+
+# A live tick vs. a prior close struck at a different moment can legitimately
+# be a percent or so apart with nothing wrong; finfact.py's corroborate()
+# uses a 1% tolerance, but that is for two sources reading the SAME filed
+# figure (an exact number that cannot legitimately differ at all). A traded
+# price is a moving target between two independent feeds' timestamps, so a
+# tighter band would manufacture false CONFLICTs on ordinary intraday drift.
+# 2% is loose enough to absorb that timing noise and still catch what this
+# check exists to catch: a wrong ticker, wrong share class, or wrong currency
+# priced as if it were the requested line.
+CROSS_CHECK_TOLERANCE = 0.02
+
+
+def cross_check(yahoo_quote, symbol, tolerance=CROSS_CHECK_TOLERANCE):
+    """Corroborate `yahoo_quote` (from_yahoo()'s return) against Nasdaq
+    Nordic for `symbol`. Returns {"status": ..., "reason": ..., "nordic":
+    ... or absent}. status is one of "CROSS-CHECKED", "CONFLICT" or
+    "not checked" - see this module's docstring for what each one means and
+    why they are never folded into each other."""
+    if not yahoo_quote or yahoo_quote.get("price") is None:
+        return {"status": "not checked", "reason": "no Yahoo price to check against"}
+
+    nordic = from_nordic(symbol)
+    if nordic is None or nordic.get("price") is None:
+        return {"status": "not checked",
+                "reason": ("no independent Nasdaq Nordic listing found or "
+                          "reachable for %r (non-Nordic ticker, no matching "
+                          "class, or Nasdaq Nordic unreachable)" % symbol)}
+
+    y_ccy = (yahoo_quote.get("currency") or "").upper()
+    n_ccy = (nordic.get("currency") or "").upper()
+    if y_ccy and n_ccy and y_ccy != n_ccy:
+        return {"status": "CONFLICT",
+                "reason": ("currency mismatch: Yahoo reports %s, Nasdaq "
+                          "Nordic reports %s for %s - the two sources are "
+                          "not pricing the same instrument, not merely "
+                          "disagreeing on its price"
+                          % (yahoo_quote.get("currency"), nordic.get("currency"),
+                             nordic.get("symbol", symbol))),
+                "nordic": nordic}
+
+    y_price, n_price = yahoo_quote["price"], nordic["price"]
+    hi, lo = max(y_price, n_price), min(y_price, n_price)
+    spread = (hi - lo) / hi if hi else 0.0
+    reason = ("Yahoo %.2f vs Nasdaq Nordic %.2f (%s) - %.2f%% apart, "
+             "tolerance %.0f%%"
+             % (y_price, n_price, nordic.get("symbol", symbol),
+                spread * 100, tolerance * 100))
+    if spread > tolerance:
+        return {"status": "CONFLICT", "reason": reason, "nordic": nordic}
+    return {"status": "CROSS-CHECKED", "reason": reason, "nordic": nordic}
+
+
 def staleness(as_of_iso):
     if not as_of_iso:
         return None, "as-of timestamp unavailable"
@@ -99,10 +276,12 @@ def report(symbol, as_json=False):
         return False
 
     hours, note = staleness(y.get("as_of_utc"))
+    check = cross_check(y, symbol)
 
     if as_json:
         print(json.dumps({"query": symbol, "yahoo": y,
-                          "staleness_hours": hours, "staleness_note": note}, indent=2))
+                          "staleness_hours": hours, "staleness_note": note,
+                          "cross_check": check}, indent=2))
         return True
 
     print("%s  %s %s" % (y.get("symbol", symbol), y.get("price"), y.get("currency", "")))
@@ -119,15 +298,112 @@ def report(symbol, as_json=False):
     elif lo and hi:
         print("  52w range  : %.2f - %.2f" % (lo, hi))
     print("  source     : %s" % y["source"])
+    print("  cross-check: %s - %s" % (check["status"], check["reason"]))
     return True
+
+
+# --------------------------------------------------------------------------
+# Self-test - offline, no network. nordic_shares.py is swapped for a fake
+# duck-typing exactly what from_nordic() calls on it (.search, .quote,
+# .root_symbol), the same swap-the-whole-module pattern portfolio_store.py
+# uses for company_resolve.py.
+# --------------------------------------------------------------------------
+
+class _FakeNordic(object):
+    def __init__(self, rows, quotes):
+        self._rows = rows
+        self._quotes = quotes
+
+    def search(self, text):
+        return self._rows
+
+    def quote(self, orderbook_id):
+        return self._quotes[orderbook_id]
+
+    def root_symbol(self, symbol):
+        parts = (symbol or "").rsplit(" ", 1)
+        return parts[0] if len(parts) == 2 and len(parts[1]) <= 2 else symbol
+
+
+class _BrokenNordic(object):
+    """Every call raises SystemExit, exactly how nordic_shares.py's own
+    api() fails on an unreachable endpoint."""
+    def search(self, text):
+        raise SystemExit("DATA NOT AVAILABLE: Nasdaq Nordic unreachable (simulated)")
+
+
+def _selftest():
+    global _NORDIC_MODULE
+    ok = 0
+
+    # --- Yahoo ticker -> Nasdaq Nordic symbol mapping ----------------------
+    assert _nordic_symbol_from_yahoo("VOLV-B.ST") == "VOLV B"
+    assert _nordic_symbol_from_yahoo("EVO.ST") == "EVO"
+    assert _nordic_symbol_from_yahoo("NOVO-B.CO") == "NOVO B"
+    assert _nordic_symbol_from_yahoo("AAPL") is None            # no suffix at all
+    assert _nordic_symbol_from_yahoo("EQNR.OL") is None         # Oslo is Euronext, not Nasdaq
+    ok += 5
+
+    y = {"price": 275.50, "currency": "SEK",
+        "source": "Yahoo Finance (unofficial endpoint)"}
+    real_nordic, _NORDIC_MODULE = _NORDIC_MODULE, None
+    try:
+        # --- agreement within tolerance -> CROSS-CHECKED --------------------
+        _NORDIC_MODULE = _FakeNordic(
+            rows=[{"orderbookId": 1, "symbol": "VOLV B",
+                  "isin": "SE0000115446", "currency": "SEK"}],
+            quotes={1: {"last": 275.10, "currency": "SEK", "as_of": "2026-09-02"}})
+        check = cross_check(y, "VOLV-B.ST")
+        assert check["status"] == "CROSS-CHECKED", check
+        ok += 1
+
+        # --- a material disagreement is a CONFLICT, never averaged away -----
+        y_bad = dict(y, price=400.0)
+        check2 = cross_check(y_bad, "VOLV-B.ST")
+        assert check2["status"] == "CONFLICT", check2
+        ok += 1
+
+        # --- currency mismatch is a CONFLICT even if the numbers are close --
+        _NORDIC_MODULE = _FakeNordic(
+            rows=[{"orderbookId": 1, "symbol": "VOLV B",
+                  "isin": "SE0000115446", "currency": "EUR"}],
+            quotes={1: {"last": 275.10, "currency": "EUR", "as_of": "2026-09-02"}})
+        check3 = cross_check(y, "VOLV-B.ST")
+        assert check3["status"] == "CONFLICT" and "currency" in check3["reason"], check3
+        ok += 1
+
+        # --- Nasdaq Nordic unreachable degrades to "not checked", never
+        # folded into a clean result and never reported as a conflict -------
+        _NORDIC_MODULE = _BrokenNordic()
+        check4 = cross_check(y, "VOLV-B.ST")
+        assert check4["status"] == "not checked", check4
+        ok += 1
+    finally:
+        _NORDIC_MODULE = real_nordic
+
+    # --- a non-Nordic ticker is "not checked", not silently skipped --------
+    y_us = {"price": 190.0, "currency": "USD",
+           "source": "Yahoo Finance (unofficial endpoint)"}
+    check5 = cross_check(y_us, "AAPL")
+    assert check5["status"] == "not checked", check5
+    ok += 1
+
+    print("quote selftest: %d assertions passed" % ok)
+    return 0
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("symbols", nargs="+")
+    ap.add_argument("symbols", nargs="*")
     ap.add_argument("--json", action="store_true", dest="as_json")
+    ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args()
+
+    if args.selftest:
+        sys.exit(_selftest())
+    if not args.symbols:
+        ap.error("give one or more ticker symbols, or --selftest")
 
     ok = True
     for i, s in enumerate(args.symbols):

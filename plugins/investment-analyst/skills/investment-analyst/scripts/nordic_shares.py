@@ -223,9 +223,25 @@ def price_history(orderbook_id, from_date, to_date):
     """Daily OHLCV from the venue of record.
 
     Without both dates the endpoint returns intraday minute bars instead;
-    `timeframe` and `period` are ignored. Prices are UNADJUSTED for splits and
-    dividends - fine for reconstructing a multiple range when paired with the
-    share count of the time, wrong for total return.
+    `timeframe` and `period` are ignored.
+
+    SPLITS: this series is BACK-ADJUSTED for splits. This was stated the
+    wrong way round here previously (v2.6 architecture review, highest-
+    ranked defect); it is measured, not assumed - see
+    corporate_actions.py's price_check() and its module docstring's "THE
+    ANSWER" section for the four confirmed, dated splits this was checked
+    against. A return, drawdown-from-high or percentile-of-own-history
+    figure computed directly on these closes is correct across a split
+    already. Do NOT run a manual split adjustment on top of this series -
+    corporate_actions.split_adjustment_factor()'s `factor` is for a
+    PER-SHARE FUNDAMENTAL (EPS, dividend, book value per share), which
+    comes from a filing and is never itself restated for a split; applying
+    it to a price from here double-adjusts it.
+
+    DIVIDENDS: NOT verified either way, and treated as unadjusted - a
+    comparison spanning an ex-dividend date is likely wrong by the dividend
+    amount and nothing here corrects it. Use this series for a price or a
+    price-based multiple range, not for a total-return calculation.
     """
     data = api("/instruments/%s/chart" % orderbook_id, assetClass="SHARES",
                lang="en", fromDate=from_date, toDate=to_date)
@@ -392,8 +408,9 @@ def main():
         print("  current sits at %9.0f%% of the %d-year distribution"
               % (pctile, args.history))
         print()
-        print("  Unadjusted for splits and dividends. Pair each close with the")
-        print("  share count of the time before turning this into a multiple range.")
+        print("  Back-adjusted for splits (this percentile is valid across one);")
+        print("  NOT adjusted for dividends. Pair each close with the share count")
+        print("  of the time before turning this into a multiple range.")
         return
 
     details.sort(key=lambda d: d["symbol"] or "")
