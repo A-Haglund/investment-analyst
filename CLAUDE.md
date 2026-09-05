@@ -158,8 +158,6 @@ price range and never a total return.
 - `MIGRATION.md` — the three breaking changes in v3.0.0 (emitted decision
   record, `/screen` replacing hand-run `screen_digest.py`, pinned price-series
   adjustment semantics).
-- `scheduled/` — Windows Task Scheduler wrappers (PowerShell) for the unattended
-  daily screen, plus its prompt and logs.
 - `_v*-backup-*/`, `_config-backup-*/`, `dist/`, `*.zip` — gitignored; git is
   the history. Don't read the backup trees for current behaviour.
 
