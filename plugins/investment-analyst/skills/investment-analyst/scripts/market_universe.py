@@ -872,7 +872,14 @@ def _extract_dividend_per_share(title):
     return mfn_news.to_number(raw.replace(",", ".")) if raw else None
 
 
-def check_corporate_actions(name, date_from, last_close_date, date_to, price=None):
+# Venues whose corporate actions Nasdaq CNS does not carry. An issuer here
+# must never be run through the CNS lookup: absence from CNS is not absence
+# of an action, it is absence of the source.
+CNS_UNCOVERED_MICS = frozenset(OSLO_MICS)
+
+
+def check_corporate_actions(name, date_from, last_close_date, date_to, price=None,
+                            mic=None):
     """Was there a split/rights issue/spin-off/dividend/other per-share-
     affecting action inside [date_from, date_to]?
 
@@ -910,6 +917,11 @@ def check_corporate_actions(name, date_from, last_close_date, date_to, price=Non
     [date_from, date_to] range is partitioned locally into the two windows
     rather than fetching twice.
 
+    `mic` is optional but load-bearing where it is known: an issuer on a
+    venue Nasdaq CNS does not carry (CNS_UNCOVERED_MICS) returns `not
+    checked` WITHOUT consulting CNS at all. Omitting it preserves the old
+    behaviour for callers that have no MIC to give.
+
     Refuses (returns `not checked`, naming the candidates seen) rather than
     silently take the top-ranked Nasdaq CNS company when MORE THAN ONE
     distinct company matches `name` and the top match is not an EXACT one -
@@ -940,6 +952,23 @@ def check_corporate_actions(name, date_from, last_close_date, date_to, price=Non
         return {"status": "not checked", "reason": "corporate_actions.py not importable",
                 "since_last_close": {"status": "not checked",
                                      "reason": "corporate_actions.py not importable"}}
+    if mic in CNS_UNCOVERED_MICS:
+        # Measured: Nasdaq CNS resolves Swedish, Danish and Finnish issuers
+        # (including the MTFs - "KebNi AB", "Matas A/S", "Qt Group Oyj" all
+        # match) and returns ZERO hits for Oslo Bors - "Equinor" and
+        # "PHOTOCURE" both. Oslo is Euronext; its disclosures live on Oslo
+        # Bors NewsWeb, which this gate does not read yet.
+        #
+        # Falling through to the no-hits branch below would return
+        # `checked / has_breaking_action: False` for EVERY Norwegian issuer -
+        # a gate that reports clean because it could not run. Worse, a
+        # Norwegian name that happened to match a Nasdaq company would attach
+        # that other company's actions to it, so CNS is not consulted at all.
+        reason = ("%s is not covered by Nasdaq CNS - Oslo Bors discloses via "
+                  "NewsWeb, which this check does not read; the corporate-action "
+                  "window could not be checked" % mic)
+        return {"status": "not checked", "reason": reason,
+                "since_last_close": {"status": "not checked", "reason": reason}}
     try:
         hits = corporate_actions.resolve_company(name)
     except (Exception, SystemExit) as exc:

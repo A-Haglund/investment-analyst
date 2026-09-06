@@ -232,13 +232,14 @@ SHALLOW_DRAWDOWN = {"drawdown_pct": -10.0, "high_date": "2025-06-01", "last_date
                     "high": 100.0, "last": 90.0, "bars_used": 300, "span_days": 400}
 
 
-def _no_breaking_action(name, date_from, last_close_date, date_to, price=None):
+def _no_breaking_action(name, date_from, last_close_date, date_to, price=None,
+                        mic=None):
     return {"status": "checked", "has_breaking_action": False, "events": [],
            "since_last_close": {"status": "checked", "count": 0, "events": []}}
 
 
 def _breaking_action_for(target_name):
-    def fn(name, date_from, last_close_date, date_to, price=None):
+    def fn(name, date_from, last_close_date, date_to, price=None, mic=None):
         if name == target_name:
             return {"status": "checked", "has_breaking_action": True,
                    "events": [{"date": "2025-01-10", "type": "SPLIT", "title": "3:1 split"}],

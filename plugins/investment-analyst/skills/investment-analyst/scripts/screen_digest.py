@@ -498,6 +498,19 @@ def fetch_return_for_instrument(row, as_of_date):
     tradeable ("primary") class can only be chosen after every class's
     last-session turnover is known; see group_by_issuer)."""
     obid = row.get("orderbookId")
+    # An Oslo row carries a synthetic id, not a Nasdaq one. Sending it to
+    # price_history() answers HTTP 400, which surfaces as a Nasdaq outage
+    # rather than as the different venue it is - and the bars exist, they
+    # just come from Euronext plus Yahoo. Same leg both screens use.
+    if market_universe is not None and market_universe.isin_from_oslo_obid(obid):
+        leg = market_universe.fetch_oslo_bars(row)
+        if leg.get("status") != "checked":
+            return {"status": "not checked", "reason": leg.get("reason")}
+        result = compute_returns(leg.get("bars"))
+        if result is None:
+            return {"status": "not checked", "reason": "no usable price bars returned"}
+        result["status"] = "checked"
+        return result
     if not obid or nordic_shares is None:
         return {"status": "not checked",
                 "reason": "no Nasdaq orderbook id - no free price-history source "
@@ -656,7 +669,8 @@ def select_worst_decile(survivors, window):
 # see its docstring below (same reasoning as _instrument_turnover_sek above).
 # ---------------------------------------------------------------------------
 
-def check_corporate_actions(name, date_from, last_close_date, date_to, price=None):
+def check_corporate_actions(name, date_from, last_close_date, date_to,
+                            price=None, mic=None):
     """Thin delegation to market_universe.check_corporate_actions.
 
     test_screen_digest.py (and this module's own --selftest) monkeypatch
@@ -682,7 +696,7 @@ def check_corporate_actions(name, date_from, last_close_date, date_to, price=Non
     market_universe.corporate_actions = corporate_actions
     market_universe.mfn_news = mfn_news
     return market_universe.check_corporate_actions(name, date_from, last_close_date,
-                                                    date_to, price=price)
+                                                    date_to, price=price, mic=mic)
 
 
 # ---------------------------------------------------------------------------
@@ -792,7 +806,8 @@ def deep_check_candidate(candidate, date_from, date_to):
     price = candidate["primary"].get("price")
     last_close_date = (candidate.get("returns") or {}).get("as_of") or date_to
     return {"corporate_action": check_corporate_actions(
-                name, date_from, last_close_date, date_to, price=price),
+                name, date_from, last_close_date, date_to, price=price,
+                mic=candidate["primary"].get("mic")),
             "regulatory_news": check_regulatory_news(
                 name, date_from, last_close_date, date_to, isin=isin, lei=lei)}
 

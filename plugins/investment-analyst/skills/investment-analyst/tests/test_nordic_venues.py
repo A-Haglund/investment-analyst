@@ -252,6 +252,109 @@ class OsloVenue(unittest.TestCase):
                       iss.get("market_cap_basis") or "")
 
 
+class CorporateActionGateRefusesWhereCnsIsBlind(unittest.TestCase):
+    """Nasdaq CNS carries Sweden, Denmark and Finland - measured: "KebNi AB",
+    "Matas A/S" and "Qt Group Oyj" all resolve. It carries nothing from Oslo:
+    "Equinor" and "PHOTOCURE" both return zero hits.
+
+    The no-hits branch returns `checked / has_breaking_action: False`, which
+    is right for a Nasdaq issuer that genuinely had no action and catastrophic
+    for a Norwegian one that CNS could never have seen - it turns a check that
+    could not run into a clean result, on every single Norwegian name."""
+
+    def setUp(self):
+        self.mu = helpers.load("market_universe")
+
+        class NeverAsked(object):
+            @staticmethod
+            def resolve_company(name):
+                raise AssertionError(
+                    "CNS must not be consulted for an uncovered venue: a "
+                    "Norwegian name matching a Nasdaq company would attach "
+                    "that other company's actions to it")
+
+        self.never = NeverAsked
+
+    def test_oslo_mics_are_the_uncovered_set(self):
+        self.assertEqual(set(self.mu.CNS_UNCOVERED_MICS), {"XOSL", "MERK"})
+
+    def test_an_oslo_issuer_is_not_checked_and_cns_is_never_consulted(self):
+        self.mu.corporate_actions = self.never
+        for mic in ("XOSL", "MERK"):
+            out = self.mu.check_corporate_actions(
+                "PHOTOCURE", "2025-01-01", "2026-09-04", "2026-09-04", mic=mic)
+            self.assertEqual(out["status"], "not checked", mic)
+            self.assertEqual(out["since_last_close"]["status"], "not checked", mic)
+            self.assertIn("NewsWeb", out["reason"])
+            self.assertNotIn("has_breaking_action", out)
+
+    def test_a_covered_venue_still_reaches_cns(self):
+        asked = []
+
+        class Fake(object):
+            @staticmethod
+            def resolve_company(name):
+                asked.append(name)
+                return []
+
+        self.mu.corporate_actions = Fake
+        out = self.mu.check_corporate_actions(
+            "Axfood", "2025-01-01", "2026-09-04", "2026-09-04", mic="XSTO")
+        self.assertEqual(asked, ["Axfood"])
+        self.assertEqual(out["status"], "checked")
+
+    def test_an_unknown_mic_keeps_the_old_behaviour(self):
+        # Callers with no MIC to give must not start refusing.
+        class Fake(object):
+            @staticmethod
+            def resolve_company(name):
+                return []
+
+        self.mu.corporate_actions = Fake
+        out = self.mu.check_corporate_actions(
+            "Axfood", "2025-01-01", "2026-09-04", "2026-09-04")
+        self.assertEqual(out["status"], "checked")
+
+
+class ScreensPassTheMicToTheGate(unittest.TestCase):
+    """A gate that can refuse is worthless if the caller never tells it which
+    venue the issuer is on."""
+
+    def test_screen_value_passes_the_primary_mic(self):
+        sv = helpers.load("screen_value")
+        seen = {}
+
+        def spy(name, date_from, last_close_date, date_to, price=None, mic=None):
+            seen["mic"] = mic
+            return {"status": "not checked", "reason": "spy"}
+
+        sv.check_corporate_actions = spy
+        sv.evaluate_corporate_actions(
+            {"primary": {"name": "PHOTOCURE", "mic": "XOSL", "price": 50.0},
+             "name": "PHOTOCURE"},
+            {"high_date": "2025-01-01", "last_date": "2026-09-04"})
+        self.assertEqual(seen.get("mic"), "XOSL")
+
+    def test_screen_digest_wrapper_forwards_the_mic(self):
+        sd = helpers.load("screen_digest")
+        seen = {}
+
+        class FakeMu(object):
+            corporate_actions = None
+            mfn_news = None
+
+            @staticmethod
+            def check_corporate_actions(name, date_from, last_close_date, date_to,
+                                        price=None, mic=None):
+                seen["mic"] = mic
+                return {"status": "not checked", "reason": "spy"}
+
+        sd.market_universe = FakeMu
+        sd.check_corporate_actions("PHOTOCURE", "2025-01-01", "2026-09-04",
+                                   "2026-09-04", mic="XOSL")
+        self.assertEqual(seen.get("mic"), "XOSL")
+
+
 class ScreenRoutesOsloRows(unittest.TestCase):
     def test_screen_value_sends_an_oslo_row_to_the_euronext_leg(self):
         sv = helpers.load("screen_value")
