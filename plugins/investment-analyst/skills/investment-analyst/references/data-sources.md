@@ -84,6 +84,70 @@ separate events.
 
 Use `scripts/mfn_news.py <slug> --reports`.
 
+### Oslo Børs NewsWeb (Norwegian regulatory disclosures)
+
+Free, no key. The authoritative Norwegian regulatory disclosure feed.
+
+| Endpoint | Returns |
+|---|---|
+| `https://api3.oslo.oslobors.no/v1/newsreader/list?fromDate=YYYY-MM-DD&toDate=YYYY-MM-DD` | every Norwegian regulatory release in the window |
+| `https://api3.oslo.oslobors.no/v1/newsreader/message?messageId=<id>` | one release including its body and attachments |
+
+Measured 411 ms for a 5-day window (2026-09-01 to 2026-09-05) returning 366
+messages; 163 ms for a single message fetch.
+
+**Traps worth documenting:**
+
+- `/list` without a date range returns only 2 messages. The date range is
+  effectively mandatory for any useful query.
+- The response carries its own `overflow` boolean meaning the window was
+  truncated. It must be surfaced, not swallowed — a truncated window that reads
+  as complete is the failure mode this toolkit refuses.
+- Server-side issuer filtering does not work (`?issuer=<id>` returned 0 messages
+  for a plausible issuer id). Filter locally on `issuerSign` or `issuerName`
+  instead.
+- Public web URL for a release: `https://newsweb.oslobors.no/message/{messageId}`.
+
+**Note:** `references/europe.md` already named NewsWeb as Norway's source before
+this script was implemented. This closes the gap between documented promises and
+actual code.
+
+Use `scripts/oslo_bors.py`.
+
+### Brønnøysundregistrene — Enhetsregisteret (Norwegian company register)
+
+Free, no key. The official Norwegian company register.
+
+| Endpoint | Returns |
+|---|---|
+| `https://data.brreg.no/enhetsregisteret/api/enheter?navn=<name>&size=<n>` | search by name, up to `<n>` results |
+| `https://data.brreg.no/enhetsregisteret/api/enheter/<organisasjonsnummer>` | direct lookup by organisation number |
+
+Measured 305 ms for a name search. Fields include: organisasjonsnummer, navn,
+organisasjonsform, hjemmeside, konkurs (bankruptcy flag), naeringskode1
+(industry code), antallAnsatte, forretningsadresse, kapital, historiskeNavn
+(historical names).
+
+**Note:** Unlike Sweden, where Bolagsverket requires credentials and has no
+keyless data, Norway provides fully open company register access. This is a
+significant advantage for Norwegian company research.
+
+Use `scripts/nordic_registers.py`.
+
+### PRH avoindata / YTJ (Finnish company register)
+
+Free, no key. The official Finnish company register.
+
+`https://avoindata.prh.fi/opendata-ytj-api/v3/companies?name=<name>&limit=<n>`
+
+Measured 1410 ms and 208 KB for a two-result query. This source is slower and
+more verbose than the Norwegian equivalent — keep `limit` small in callers and
+cache results when possible. Fields include: businessId, names (a list including
+historical names), companyForms, mainBusinessLine, status, tradeRegisterStatus,
+registrationDate, endDate, addresses, registeredEntries.
+
+Use `scripts/nordic_registers.py`.
+
 ### ESEF — European Inline XBRL (Nordics, France, most of the EU)
 
 Free, no key. Annual reports only. **Germany and Ireland are not covered.**
@@ -147,15 +211,20 @@ returns the global Swedish firehose, not the company; do not use it.
 
 No regulatory flag exists in the feed. Use `scripts/cision_news.py`.
 
-### Avanza (company search, IR homepage pointer, calendar cross-check)
+### Avanza (company search, IR homepage pointer, calendar cross-check, market data)
 
-Free, no key, no login. Two endpoints, both under `www.avanza.se/_api`, used by
-`ir_discovery.py` (`avanza_lookup`) and, through it, `horizon.py`:
+Free, no key, no login. Multiple endpoints, all under `www.avanza.se/_api`, used by
+`ir_discovery.py` (`avanza_lookup`), `horizon.py`, and `avanza_market.py`:
 
 | Endpoint | Returns |
 |---|---|
 | `POST https://www.avanza.se/_api/search/filtered-search` `{"query": <name>, "searchFilter": {"types": ["STOCK"]}}` | ranked search hits: name, ticker, `orderBookId`, country flag |
 | `GET https://www.avanza.se/_api/market-guide/stock/{orderBookId}/details` | `company.homepage`, share count, owners, `companyEvents.events` (the financial calendar `horizon.py` reads), past dividends |
+| `GET https://www.avanza.se/_api/market-guide/short-selling/{orderBookId}` | `shortSellingHistory` with epoch-millisecond timestamps |
+| `GET https://www.avanza.se/_api/market-guide/stock/{orderBookId}/analysis` | computed financial ratios and history. Explicitly carries NO analyst estimates and NO price target — the entire payload was verified (2026-09-05) |
+| `GET https://www.avanza.se/_api/market-guide/number-of-owners/{orderBookId}` | `ownersPoints` |
+
+Measured (2026-09-05): short-selling 148 ms, analysis 368 ms, number-of-owners 93 ms.
 
 Both are unofficial — the website's own XHR backend, not a published,
 documented API. `filtered-search` is POST-only (it answers 405 to a plain GET,
@@ -348,6 +417,13 @@ as consensus.
 - **FRED** (Federal Reserve macro data) — deliberately skipped. A free key from
   `fredaccount.stlouisfed.org/apikey` and `FRED_API_KEY` in the environment would
   enable it. Mention it only if a question genuinely turns on macro series.
+
+- **Denmark — CVR register (cvrapi.dk)** — deliberately not used. The API
+  responds `{"error":"QUOTA_EXCEEDED"}` under normal public access and its terms
+  require an identifying `User-Agent` header. Both violate project constraints:
+  no circumvention of metered limits, and no identifying request headers. This is
+  a deliberate exclusion, not a gap — documented so nobody re-adds it later
+  believing it was an oversight.
 
 ## Terms-of-service posture
 

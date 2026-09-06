@@ -168,6 +168,13 @@ try:
     import _bootstrap
 except Exception:                                        # pragma: no cover
     _bootstrap = None
+try:
+    import issuer_feed
+except (Exception, SystemExit):                          # pragma: no cover
+    # SystemExit deliberately listed: it does not inherit from Exception, and
+    # every sibling in this folder signals "DATA NOT AVAILABLE" by raising it.
+    # A soft load that omits it does not degrade - it takes the CLI down.
+    issuer_feed = None
 
 CNS = "https://api.news.eu.nasdaq.com/news/query.action"
 
@@ -918,10 +925,25 @@ def collect_mfn(slug_or_name, limit=60):
     except SystemExit as e:
         return [], str(e)
     if hits:
-        needle = _norm(slug_or_name)
-        best = sorted(hits, key=lambda h: (_norm(h["name"] or "") != needle,
-                                           len(h["slug"])))
-        slug = best[0]["slug"]
+        slug = slug_or_name  # default: if resolution fails, use verbatim
+        if issuer_feed is not None:
+            # Unified issuer resolver: rejects ambiguous names like "Volvo"
+            # that match multiple distinct issuers, rather than guessing.
+            _, slug_from_feed, _, note = issuer_feed.resolve(
+                slug_or_name, search_mfn=lambda q: hits, search_cision=lambda q: [])
+            if note:
+                # Refusal on ambiguity; pass it through as the error.
+                return [], note
+            if slug_from_feed is not None:
+                # Resolved to exactly one issuer; use its slug.
+                slug = slug_from_feed
+            # else: no match found at all - keep slug as slug_or_name verbatim
+        else:
+            # issuer_feed not available; fall back to hand-rolled tie-break.
+            needle = _norm(slug_or_name)
+            best = sorted(hits, key=lambda h: (_norm(h["name"] or "") != needle,
+                                               len(h["slug"])))
+            slug = best[0]["slug"]
     try:
         data = mfn_news.fetch("/a/%s.json" % urllib.parse.quote(slug), limit=limit)
     except SystemExit as e:
@@ -1399,6 +1421,26 @@ def unexplained_share_count_moves(events, classified_rows, window_days=15):
 # relative to market price (TERP), not on a fixed ratio. Guessing one would be
 # exactly the "silent adjustment factor" the spec warns against.
 
+def _collect_mfn_noting(company, notes):
+    """collect_mfn(), with the refusal recorded instead of dropped.
+
+    collect_mfn now returns a COMPANY_IDENTITY_AMBIGUOUS refusal for a name it
+    will not resolve, where it used to return an empty list only when MFN was
+    genuinely quiet. Three callers unpacked that error into `_`, which turned
+    "I would not attribute this newsroom to anyone" into "MFN contributed no
+    rows" - and the result was then computed from Nasdaq CNS alone and
+    presented as complete. That is the failure CLAUDE.md names: a check that
+    could not run is not a check that passed, and split_adjustment_factor is
+    the one function it singles out as safety-critical.
+
+    `notes` is a list the caller surfaces (a warnings list, or stderr).
+    """
+    rows, err = collect_mfn(company)
+    if err:
+        notes.append("MFN leg unavailable for %r: %s" % (company, err))
+    return rows
+
+
 def corporate_actions_between(company, date_from, date_to, pages=3):
     """Every classified action in [date_from, date_to], oldest first.
 
@@ -1409,8 +1451,13 @@ def corporate_actions_between(company, date_from, date_to, pages=3):
     "this IS the history depth" limit collect_nasdaq documents.
     """
     rows = collect_nasdaq(company, pages=pages)
-    mfn_rows, _ = collect_mfn(company)
-    rows += mfn_rows
+    _notes = []
+    rows += _collect_mfn_noting(company, _notes)
+    for _n in _notes:
+        # This function returns a bare list with nowhere to put a caveat, so
+        # the refusal goes to stderr rather than vanishing. A caller that
+        # needs it structured should use split_adjustment_factor's shape.
+        print("(corporate_actions: %s)" % _n, file=sys.stderr)
     rows, _ = dedupe(rows)
     out = [r for r in rows if r.get("type")
            and date_from <= _sort_key(r)[:10] <= date_to]
@@ -1495,8 +1542,13 @@ def split_adjustment_factor(company, date_from, date_to, pages=3):
     # a share-count move can still be matched even when it lands just outside
     # date_from/date_to (a headline dated the day before the disclosure, say).
     all_rows = collect_nasdaq(company, pages=pages)
-    mfn_rows, _ = collect_mfn(company)
-    all_rows += mfn_rows
+    _before = len(warnings)
+    all_rows += _collect_mfn_noting(company, warnings)
+    # A missing MFN leg means the action sweep behind `factor` is incomplete,
+    # and this factor is applied to per-share fundamentals. `reliable` is
+    # computed in the return below, so the flag is carried there rather than
+    # assigned to a local the return never reads.
+    mfn_leg_missing = len(warnings) > _before
     all_rows, _ = dedupe(all_rows)
 
     other = [r for r in all_rows
@@ -1577,7 +1629,8 @@ def split_adjustment_factor(company, date_from, date_to, pages=3):
         "confirmed_splits": confirmed,
         "unconfirmed_signatures": unconfirmed,
         "other_actions_in_window": other,
-        "reliable": bool(confirmed or (not unconfirmed and not other)),
+        "reliable": bool((confirmed or (not unconfirmed and not other))
+                         and not mfn_leg_missing),
         "warnings": warnings,
     }
 
@@ -2035,8 +2088,10 @@ def main():
         # with NO announcement worded like one - see
         # unexplained_share_count_moves for the confirmed Evolution case.
         classified_rows = collect_nasdaq(company, pages=args.pages)
-        mfn_rows, _ = collect_mfn(args.company)
-        classified_rows += mfn_rows
+        _notes = []
+        classified_rows += _collect_mfn_noting(args.company, _notes)
+        for _n in _notes:
+            print("(corporate_actions: %s)" % _n, file=sys.stderr)
         classified_rows, _ = dedupe(classified_rows)
         unexplained = unexplained_share_count_moves(events, classified_rows)
         if args.as_json:

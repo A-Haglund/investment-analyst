@@ -33,7 +33,11 @@ document, cite the company.
 **Tier 4 may never be the sole source of a material financial figure.** It can
 supply a lead, a cross-check, or a pointer. Avanza's `homepage` field pointing
 at a company's IR site is a legitimate tier-4 use; Avanza's share count as the
-basis for market cap is not.
+basis for market cap is not. Avanza's short-selling series (`/_api/market-guide/
+short-selling/{orderBookId}`) and computed ratio history (`/_api/market-guide/stock/
+{orderBookId}/analysis`) are cross-checks only: FI Blankningsregistret remains
+the authority for Swedish short interest, and a filing remains the authority for
+a financial figure.
 
 ## Resolution table — the authority for each data type
 
@@ -44,6 +48,7 @@ basis for market cap is not.
 | **Financial statements, annual** | Audited annual report | ESEF tagged filing (`esef_fundamentals.py`), then the year-end release | A press summary |
 | **Financial statements, quarterly** | Interim report PDF | The MAR release body (`mfn_news.py --figures`, `cision_news.py`) | ESEF — it is annual only |
 | **Insider transactions (SE)** | Finansinspektionen Insynsregistret (`insider_se.py`) | — | Any secondary aggregator |
+| **Regulatory disclosures (NO)** | Oslo Børs NewsWeb (`oslo_bors.py`) | — | Note: NewsWeb and MFN can carry the same Norwegian release — they do NOT corroborate each other, as they are the same origin reported once |
 | **Short interest (SE)** | FI Blankningsregistret (`short_se.py`) | — | Named holders presented as the total |
 | **Institutional ownership (SE)** | FI Fondinnehav (`ownership_se.py`) + the annual report ownership table | Company IR "Aktien" page | Any claim of *complete* ownership |
 | **Risk-free rate (SEK)** | Riksbanken SWEA `SEGVB10YC` (`macro_se.py --dcf-inputs`) | — | A remembered or assumed rate |
@@ -53,11 +58,13 @@ basis for market cap is not.
 | **Price, current** | Nasdaq (`nordic_shares.py`, `quote.py`) | Nordic tickers when `quote.py` fails: the tier-4 HTML fallbacks below, in the order `SKILL.md` gives (`borskollen.se`, `allaaktier.se`, `aktiespararna.se`) — **manual lookups, not fetched by any script** — recorded as `SINGLE SOURCE` | Any price without a timestamp |
 | **Price, historical** | Nasdaq price history — **back-adjusted for splits** (measured, four dated cases); dividend treatment unverified | — | Applying a split factor on top of it; a total-return claim |
 | **Corporate actions** | Nasdaq CNS "Total number of voting rights and capital"; MFN `sub:ca:*` tags | Cision releases | Inference from a price gap alone |
-| **Legal entity, orgnr** | EU VIES; ESMA FIRDS for ISIN↔LEI↔MIC | GLEIF | A name match alone |
+| **Legal entity, orgnr (SE)** | EU VIES; ESMA FIRDS for ISIN↔LEI↔MIC | GLEIF | A name match alone |
+| **Legal entity, orgnr (NO)** | Brønnøysundregistrene Enhetsregisteret (`nordic_registers.py`) | — | A name match alone |
+| **Legal entity, orgnr (FI)** | PRH avoindata / YTJ (`nordic_registers.py`) | — | A name match alone |
 | **Company identity** | `company_resolve.py` — must reach sufficient confidence before analysis starts | — | Proceeding on an ambiguous name |
 | **Financial targets, guidance** | The company's own IR site and annual report | The MAR release body | Treating guidance as verified |
 | **Next scheduled report / calendar date** | The issuer's own "Finansiell kalender" page (`ir_discovery.py` locates it) | Avanza `companyEvents` (`horizon.py`) — **tier 4, SINGLE SOURCE**, an unofficial `_api` endpoint; a lead to verify, never a cited date | A guessed duration; a date without its source |
-| **Consensus estimates** | **None available free** | Reverse DCF as a *substitute question* | Calling a reverse DCF "consensus" |
+| **Consensus estimates** | **None available free** | Reverse DCF as a *substitute question*. Candidates checked and ruled out: MFN's `modularfinance-estimates` feed (consensus estimates for a handful of issuers, no price target) and Avanza's `/analysis` endpoint (no price target) | Calling a reverse DCF "consensus" |
 | **Earnings transcripts** | **None available free** | The report PDF and investor presentation | A third-party summary of a call |
 
 A single price applied to a multi-class issuer's total share count is wrong

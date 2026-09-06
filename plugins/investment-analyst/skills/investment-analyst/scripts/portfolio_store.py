@@ -49,7 +49,8 @@ SCHEMA  (see the module docstring's JSON example in the project spec)
          "name": "Sandvik AB", "symbol": "SAND B",
          "quantity": 420, "cost_per_share": 312.40, "cost_currency": "SEK",
          "acquired": "2025-03-14", "note": "",
-         "fair_value_low": null, "fair_value_high": null, "bear_value": null}
+         "fair_value_low": null, "fair_value_high": null, "bear_value": null,
+         "feed_venue": "MFN", "feed_slug": "sandvik-ab"}
       ]
     }
     quantity is required on every holding, and must be a positive number -
@@ -72,6 +73,14 @@ SCHEMA  (see the module docstring's JSON example in the project spec)
     drawdown case). save() requires fair_value_low <= fair_value_high
     whenever both are present. A document written before these fields
     existed loads fine - load() fills them in as null on every holding.
+
+    feed_venue and feed_slug are optional, nullable fields resolved from
+    issuer_feed.py when the holding's identity resolves cleanly. feed_venue
+    is "MFN" or "Cision", feed_slug is the newsroom slug for that venue.
+    Both are populated at --add time if the slug resolves; on a refusal or
+    nothing found they remain None. A holding without a newsroom slug is
+    completely valid. load() fills them in as null on every holding from
+    documents written before these fields existed.
 
 USAGE
     portfolio_store.py --paste                      # read a pasted block from stdin
@@ -156,6 +165,13 @@ def _company_resolve():
     return _CR_MODULE
 
 
+# issuer_feed.py resolves newsroom slugs for each holding. Soft-loaded only
+# when a holding is added or pasted and its identity resolves cleanly, never
+# on --list / --cash / --remove. If unavailable, feed_venue and feed_slug
+# fields are simply left None.
+_IF_MODULE = None
+
+
 # --------------------------------------------------------------------------
 # Storage
 # --------------------------------------------------------------------------
@@ -202,8 +218,10 @@ def load(name="default"):
     # A document written before fair_value_low/fair_value_high/bear_value
     # existed has holdings with no such keys at all - fill them in as null
     # rather than making every caller defend against a missing key.
+    # Likewise for feed_venue/feed_slug added later.
     for h in doc.get("holdings") or []:
-        for k in ("fair_value_low", "fair_value_high", "bear_value"):
+        for k in ("fair_value_low", "fair_value_high", "bear_value",
+                  "feed_venue", "feed_slug"):
             h.setdefault(k, None)
     return doc
 
@@ -516,6 +534,34 @@ def parse_paste(text):
 # Identity resolution
 # --------------------------------------------------------------------------
 
+def _resolve_feed(_name):
+    """Always (None, None). The newsroom slug is NOT resolved at add time.
+
+    It used to be, and that was wrong three ways at once.
+
+    NETWORK IN A STORE. This module's whole job is to record what the user
+    told it. Resolving a newsroom put two HTTP requests behind every added
+    holding, so a twelve-name paste could stall for minutes on a slow link -
+    for a field that is optional and that nothing needs until a review runs.
+
+    IT MADE THE OFFLINE SUITE ONLINE. `--selftest` opened eight live
+    connections and tests/test_portfolio_store.py opened twenty-eight, while
+    that file's own header states no network call is made anywhere in it.
+
+    A CACHE THAT NEVER EXPIRES. A slug resolved once at add time is written
+    to disk and trusted for the life of the holding. Newsrooms are renamed
+    and reassigned; a stale slug then reads as a clean "no news since last
+    review" rather than as a stale pointer.
+
+    So `feed_venue` / `feed_slug` stay in the schema as a MANUAL PIN: set them
+    when a name is genuinely ambiguous and the resolver refuses, which is what
+    issuer_feed's own refusal message advises. Left unset, portfolio_review
+    resolves per run through issuer_feed, whose result is cached at the MFN
+    layer anyway.
+    """
+    return None, None
+
+
 def _candidate_line(c):
     return ("%s  (ticker %s, ISIN %s, LEI %s)"
            % (c.get("company_name") or "?",
@@ -655,6 +701,7 @@ def resolve_rows(rows):
                 refusals.append({"raw_line": row.get("raw_line", ""), "name": name,
                                  "reason": err.reason, "candidates": err.candidates})
             else:
+                feed_venue, feed_slug = _resolve_feed(name)
                 holdings.append({
                     "lei": None, "isin": None, "name": name, "symbol": None,
                     "quantity": quantity, "cost_per_share": row.get("cost_per_share"),
@@ -663,6 +710,7 @@ def resolve_rows(rows):
                     "fair_value_low": row.get("fair_value_low"),
                     "fair_value_high": row.get("fair_value_high"),
                     "bear_value": row.get("bear_value"),
+                    "feed_venue": feed_venue, "feed_slug": feed_slug,
                     "resolved": False})
             continue
 
@@ -690,6 +738,7 @@ def resolve_rows(rows):
                 symbol = _field(match.get("symbol")) or symbol
                 isin = _field(match.get("isin")) or isin
 
+        feed_venue, feed_slug = _resolve_feed(rec.get("company_name") or name)
         holdings.append({
             "lei": _field(rec.get("lei")), "isin": isin,
             "name": rec.get("company_name") or name,
@@ -700,6 +749,7 @@ def resolve_rows(rows):
             "fair_value_low": row.get("fair_value_low"),
             "fair_value_high": row.get("fair_value_high"),
             "bear_value": row.get("bear_value"),
+            "feed_venue": feed_venue, "feed_slug": feed_slug,
             "resolved": True})
     return holdings, refusals
 
@@ -921,11 +971,13 @@ def _cmd_add(args):
             return 1
         print("--force given: adding %r unresolved (no identity attached)."
               % args.add)
+        feed_venue, feed_slug = _resolve_feed(args.add)
         holding = {"lei": None, "isin": None, "name": row["name"], "symbol": None,
                   "quantity": args.qty, "cost_per_share": args.price,
                   "cost_currency": row["cost_currency"], "acquired": args.acquired,
                   "note": args.note or "", "fair_value_low": fv_low,
                   "fair_value_high": fv_high, "bear_value": bear_value,
+                  "feed_venue": feed_venue, "feed_slug": feed_slug,
                   "resolved": False}
     else:
         holding = holdings[0]
@@ -1281,14 +1333,21 @@ def _selftest():
             assert back["holdings"][0]["name"] == "Sandvik AB"
             assert back["cash"]["amount"] == 24000.0
             assert back["account_type"] == "ISK"
-            ok += 3
+            # Verify backward compatibility: load() fills in feed_venue/feed_slug
+            # as None for holdings from documents that predated these fields.
+            assert back["holdings"][0]["feed_venue"] is None
+            assert back["holdings"][0]["feed_slug"] is None
+            ok += 5
 
             # save() refuses a holding with no quantity
             bad = _new_doc("selftest")
             bad["holdings"] = [{"lei": None, "isin": None, "name": "Nope",
                                 "symbol": None, "quantity": None,
                                 "cost_per_share": None, "cost_currency": None,
-                                "acquired": None, "note": ""}]
+                                "acquired": None, "note": "",
+                                "fair_value_low": None, "fair_value_high": None,
+                                "bear_value": None, "feed_venue": None,
+                                "feed_slug": None}]
             try:
                 save(bad, "selftest")
                 raise AssertionError("save() should have refused a holding "

@@ -35,6 +35,7 @@ valuation_gate = load("valuation_gate")
 share_semantics = load("share_semantics")
 guidance_track = load("guidance_track")
 peers_se = load("peers_se")
+portfolio_review = load("portfolio_review")
 
 
 class CompanyResolveBrandGuard(unittest.TestCase):
@@ -217,6 +218,170 @@ class PeersSeRefusesAmbiguousIdentity(unittest.TestCase):
         with contextlib.redirect_stdout(buf):
             result = peers_se.resolve_target("volvo", issuers)
         self.assertEqual(result, "k1")
+
+
+class PortfolioReviewRefusesAmbiguousIdentity(unittest.TestCase):
+    """fetch_news_since() refuses when a holding's issuer name is ambiguous,
+    naming both candidates so the user can disambiguate. It correctly delegates
+    to issuer_feed.resolve() and returns (None, note) on refusal - the contract
+    that portfolio_review.fetch_news_since() must uphold.
+    """
+
+    def setUp(self):
+        self._real_issuer_feed = portfolio_review.issuer_feed
+
+    def tearDown(self):
+        portfolio_review.issuer_feed = self._real_issuer_feed
+
+    def test_two_distinct_issuers_refuse_and_name_both_candidates(self):
+        """Two distinct issuers matching one query must refuse and name both.
+        This is the Volvo case: "Volvo" could be either AB Volvo or Volvo Car AB.
+        """
+        call_count = [0]
+
+        def mock_resolve(self, name, search_mfn=None, search_cision=None, limit=12):
+            call_count[0] += 1
+            if name == "Volvo":
+                # Simulate issuer_feed.resolve() returning a refusal with both candidates
+                return (None, None, None,
+                        "COMPANY_IDENTITY_AMBIGUOUS: 2 distinct MFN issuers match "
+                        "'Volvo' (ab-volvo (AB Volvo), volvo-car-ab (Volvo Car AB)). "
+                        "Attributing a newsroom to the wrong issuer is silent and looks "
+                        "identical to a correct answer - re-run with the exact legal name.")
+            return None, None, None, None
+
+        portfolio_review.issuer_feed = type('MockIssuerfeed', (object,),
+                                             {'resolve': mock_resolve})()
+        data, error = portfolio_review.fetch_news_since({"name": "Volvo"})
+        self.assertIsNone(data)
+        self.assertIsNotNone(error)
+        self.assertIn("COMPANY_IDENTITY_AMBIGUOUS", error)
+        self.assertIn("AB Volvo", error)
+        self.assertIn("Volvo Car AB", error)
+        self.assertEqual(call_count[0], 1)
+
+    def test_correct_issuer_not_top_hit_regression_case(self):
+        """Regression test: MFN's /all/s.json is relevance-ranked by factors
+        other than exact issuer name, so hits[0] regularly points to a broker,
+        regulator or research publisher that mentioned the company, not the
+        company's own newsroom. When searching for "Axfood", hits might be:
+        [Nordnet, Avanza, Axfood, Stockpicker]. The correct slug "axfood" is
+        present at position 2, not at position 0. fetch_news_since() must use
+        issuer_feed.resolve() which correctly picks Axfood (position 2), not
+        blindly taking hits[0] which would be Nordnet. This test would have
+        caught the original bug where fetch_news_since() did `hits[0]["slug"]`.
+        """
+        call_count = [0]
+
+        def mock_resolve(self, name, search_mfn=None, search_cision=None, limit=12):
+            call_count[0] += 1
+            if name == "Axfood":
+                # Simulate issuer_feed.resolve() correctly returning the axfood
+                # slug even though hits[0] would have been nordnet
+                return "MFN", "axfood", "Axfood", None
+            return None, None, None, None
+
+        # Mock mfn_news to avoid network calls
+        self._real_mfn_news = portfolio_review.mfn_news
+        def mock_fetch_company_pages(slug, pages=1):
+            if slug == "axfood":
+                return [{"slug": "axfood", "title": "Axfood news"}]
+            return []
+
+        def mock_flatten(item):
+            return item
+
+        portfolio_review.issuer_feed = type('MockIssuerfeed', (object,),
+                                             {'resolve': mock_resolve})()
+        if portfolio_review.mfn_news:
+            portfolio_review.mfn_news.fetch_company_pages = mock_fetch_company_pages
+            portfolio_review.mfn_news.flatten = mock_flatten
+
+        data, error = portfolio_review.fetch_news_since({"name": "Axfood"})
+        self.assertIsNone(error, "Should resolve cleanly to axfood, not to nordnet")
+        self.assertIsNotNone(data)
+        self.assertEqual(data["slug"], "axfood")
+        self.assertEqual(call_count[0], 1)
+
+        portfolio_review.mfn_news = self._real_mfn_news
+
+    def test_prefilled_feed_slug_skips_resolution(self):
+        """A holding that already carries feed_slug must NOT trigger any
+        resolution at all. issuer_feed.resolve() must never be called.
+        """
+        call_count = [0]
+
+        def mock_resolve(self, name, search_mfn=None, search_cision=None, limit=12):
+            call_count[0] += 1
+            # Should never reach this
+            return None, None, None, "Should not be called"
+
+        # Mock mfn_news to return data when slug is provided
+        self._real_mfn_news = portfolio_review.mfn_news
+        def mock_fetch_company_pages(slug, pages=1):
+            if slug == "prefilled-slug":
+                return [{"slug": "prefilled-slug", "title": "News"}]
+            return []
+
+        def mock_flatten(item):
+            return item
+
+        portfolio_review.issuer_feed = type('MockIssuerfeed', (object,),
+                                             {'resolve': mock_resolve})()
+        if portfolio_review.mfn_news:
+            portfolio_review.mfn_news.fetch_company_pages = mock_fetch_company_pages
+            portfolio_review.mfn_news.flatten = mock_flatten
+
+        # Holding with feed_slug already set
+        data, error = portfolio_review.fetch_news_since({
+            "name": "Axfood",
+            "feed_slug": "prefilled-slug"
+        })
+        # Should succeed with the prefilled slug
+        self.assertIsNone(error)
+        self.assertIsNotNone(data)
+        self.assertEqual(data["slug"], "prefilled-slug")
+        # Verify resolve was never called
+        self.assertEqual(call_count[0], 0)
+
+        portfolio_review.mfn_news = self._real_mfn_news
+
+    def test_unambiguous_single_match_resolves_cleanly(self):
+        """Control: an unambiguous single match must resolve cleanly without
+        triggering a refusal. The resolver must not be over-eager in refusing.
+        """
+        call_count = [0]
+
+        def mock_resolve(self, name, search_mfn=None, search_cision=None, limit=12):
+            call_count[0] += 1
+            if name == "AB Volvo":
+                # Unambiguous match - should return cleanly
+                return "MFN", "ab-volvo", "AB Volvo", None
+            return None, None, None, None
+
+        # Mock mfn_news
+        self._real_mfn_news = portfolio_review.mfn_news
+        def mock_fetch_company_pages(slug, pages=1):
+            if slug == "ab-volvo":
+                return [{"slug": "ab-volvo", "title": "AB Volvo news"}]
+            return []
+
+        def mock_flatten(item):
+            return item
+
+        portfolio_review.issuer_feed = type('MockIssuerfeed', (object,),
+                                             {'resolve': mock_resolve})()
+        if portfolio_review.mfn_news:
+            portfolio_review.mfn_news.fetch_company_pages = mock_fetch_company_pages
+            portfolio_review.mfn_news.flatten = mock_flatten
+
+        data, error = portfolio_review.fetch_news_since({"name": "AB Volvo"})
+        self.assertIsNone(error, "An unambiguous match should not produce a refusal")
+        self.assertIsNotNone(data)
+        self.assertEqual(data["slug"], "ab-volvo")
+        self.assertEqual(call_count[0], 1)
+
+        portfolio_review.mfn_news = self._real_mfn_news
 
 
 if __name__ == "__main__":

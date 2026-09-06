@@ -176,6 +176,24 @@ def parse_tags(note):
 # without touching quote.py itself.
 # ==========================================================================
 
+def _yahoo_symbol_for(holding, portfolio):
+    """The Yahoo symbol for a stored holding, or its raw ticker as a fallback.
+
+    See quote.yahoo_symbol() for why the venue suffix comes from the portfolio
+    currency before the ISIN: the ISIN states where the issuer is registered,
+    not where the share trades, and the two differ often enough to drop real
+    holdings silently.
+    """
+    symbol = holding.get("symbol")
+    if not symbol:
+        return symbol
+    q = quote_mod()
+    if not hasattr(q, "yahoo_symbol"):
+        return symbol
+    return q.yahoo_symbol(symbol, holding.get("isin"),
+                          currency=(portfolio or {}).get("currency")) or symbol
+
+
 def fetch_price(symbol):
     """Current price for one symbol, or None. Never raises.
 
@@ -452,7 +470,14 @@ def build(portfolio, as_of=None, foreign_threshold_pct=20.0):
     currencies_needed = set()
     prelim = []
     for h in raw_holdings:
-        price_info = fetch_price(h.get("symbol"))
+        # The stored ticker is Nasdaq-style ("AXFO", "SHB A"); Yahoo addresses
+        # a listing and needs "AXFO.ST" / "SHB-A.ST". Handing the raw ticker
+        # over returned None for every Nordic holding, and a holding with no
+        # price is dropped below - so a full portfolio reported zero holdings
+        # and a total equal to its cash balance. Mapped HERE rather than inside
+        # fetch_price so that function keeps one job (price for a Yahoo symbol)
+        # and stays patchable by the tests with a one-argument stub.
+        price_info = fetch_price(_yahoo_symbol_for(h, portfolio))
         tags = parse_tags(h.get("note"))
         if price_info and price_info.get("currency"):
             currencies_needed.add(price_info["currency"])

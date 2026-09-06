@@ -67,6 +67,98 @@ def fetch(url, timeout=20):
         return json.loads(r.read())
 
 
+# Yahoo suffixes by ISIN country prefix. Yahoo addresses a listing, not an
+# issuer, so the venue has to be in the symbol: "AXFO" is not a Yahoo ticker
+# and returns nothing, while "AXFO.ST" returns the Stockholm listing.
+_YAHOO_SUFFIX = {
+    "SE": ".ST",   # Nasdaq Stockholm / First North Stockholm
+    "NO": ".OL",   # Oslo Børs / Euronext Growth Oslo
+    "DK": ".CO",   # Nasdaq Copenhagen
+    "FI": ".HE",   # Nasdaq Helsinki
+    "IS": ".IC",   # Nasdaq Iceland
+    "FR": ".PA",   # Euronext Paris
+    "DE": ".DE",   # XETRA
+    "NL": ".AS", "BE": ".BR", "PT": ".LS",
+}
+
+
+# The listing currency, where it names exactly one venue. This outranks the
+# ISIN because it describes where the share TRADES; an ISIN describes where the
+# issuer is REGISTERED, and those differ often enough to matter - Kambi Group
+# plc carries a Maltese ISIN (MT0000780107) and trades on Nasdaq Stockholm as
+# KAMBI.ST. EUR is deliberately absent: Helsinki, Paris, Amsterdam, Brussels
+# and XETRA all quote in it, so it names no venue and must fall through to the
+# ISIN.
+_YAHOO_SUFFIX_BY_CURRENCY = {
+    "SEK": ".ST", "NOK": ".OL", "DKK": ".CO", "ISK": ".IC",
+}
+
+
+def yahoo_symbol(ticker, isin=None, country=None, currency=None):
+    """Nasdaq-style ticker -> Yahoo symbol, or None when it cannot be built.
+
+    Two transformations, both load-bearing:
+
+      "SHB A"  -> "SHB-A.ST"     space becomes a hyphen, venue suffix appended
+      "AXFO"   -> "AXFO.ST"
+
+    WHY THIS IS SHARED. The mapping existed in exactly one place
+    (valuation_gate's Nordic path) and the two portfolio scripts did not know
+    about it - they handed company_resolve's raw ticker straight to Yahoo,
+    every lookup returned None, and every holding was dropped for having no
+    price. A portfolio review then reported zero holdings and a total equal to
+    the cash balance: not an error, an answer, and a wrong one.
+
+    THE SUFFIX IS DERIVED, NOT ASSUMED. That single earlier copy appended
+    ".ST" unconditionally, which is right for Stockholm and wrong for every
+    other venue this toolkit covers - Oslo needs ".OL", Copenhagen ".CO",
+    Helsinki ".HE", Paris ".PA".
+
+    WHICH SIGNAL, AND WHY THE ORDER. What is needed is the VENUE, and neither
+    input states it, so both are proxies and they disagree:
+
+      `currency`  describes where the share trades. Preferred, but only when
+                  it names one venue - EUR names five, so it is not in the map.
+      `isin`      describes where the ISSUER IS REGISTERED. A weaker proxy,
+                  used only when currency cannot answer. Kambi Group plc is
+                  the standing counter-example: ISIN MT0000780107 (Malta),
+                  traded as KAMBI.ST in Stockholm. Reading the ISIN as the
+                  venue dropped it from a portfolio silently, because a
+                  holding with no price is a holding with no weight.
+      `country`   an explicit override for a caller that actually knows.
+
+    With none of them usable this REFUSES rather than guessing ".ST". A wrong
+    suffix does not raise - it prices a different listing, or nothing at all,
+    and both read as an answer.
+
+    The authoritative fix is to record the venue on the holding when it is
+    resolved. Until the store carries that, this is a documented proxy chain,
+    not a lookup.
+    """
+    if not ticker:
+        return None
+
+    # Already qualified: return it untouched. A caller may hold a Yahoo symbol
+    # rather than a Nasdaq ticker ("AXFO.ST", "XYZ.OL"), and appending a second
+    # suffix produces "AXFO.ST.ST", which resolves to nothing. Any dot means
+    # the venue is already stated - Nordic tickers carry spaces and hyphens,
+    # never dots.
+    cleaned = ticker.strip()
+    if "." in cleaned:
+        return cleaned.replace(" ", "-")
+
+    suffix = None
+    if country:
+        suffix = _YAHOO_SUFFIX.get(country.strip().upper())
+    if not suffix and currency:
+        suffix = _YAHOO_SUFFIX_BY_CURRENCY.get(currency.strip().upper())
+    if not suffix and isin:
+        suffix = _YAHOO_SUFFIX.get(isin[:2].upper())
+    if not suffix:
+        return None
+    return ticker.strip().replace(" ", "-") + suffix
+
+
 def from_yahoo(symbol):
     # Must not raise: Yahoo 404s on a bad ticker and 429s under rate limiting,
     # and those are exactly the moments the Nasdaq fallback has to take over.
