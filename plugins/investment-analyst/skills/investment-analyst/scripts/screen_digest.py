@@ -309,12 +309,20 @@ if market_universe is not None:
     NASDAQ_MICS = market_universe.NASDAQ_MICS
     OTHER_MICS = market_universe.OTHER_MICS
     ALL_MICS = market_universe.ALL_MICS
+    DEFAULT_MICS = market_universe.DEFAULT_MICS
     REGULATED_MICS = market_universe.REGULATED_MICS
     VENUE_LABEL = market_universe.VENUE_LABEL
     Budget = market_universe.Budget
     NASDAQ_THROTTLE = market_universe.NASDAQ_THROTTLE
     _num = market_universe._num
     fetch_nasdaq_snapshot = market_universe.fetch_nasdaq_snapshot
+
+    def fetch_nasdaq_snapshots(mics):
+        # Routed through this module's own fetch_nasdaq_snapshot so that
+        # replacing that name still intercepts every market's fetch.
+        return market_universe.fetch_nasdaq_snapshots(
+            mics, _fetch=lambda market: fetch_nasdaq_snapshot(market))
+
     fetch_firds = market_universe.fetch_firds
     combine_universe = market_universe.combine_universe
     group_by_issuer = market_universe.group_by_issuer
@@ -334,10 +342,11 @@ else:                                                    # pragma: no cover
     # crash on the first NameError.
     DEFAULT_LIQUIDITY_FLOOR_SEK = 2_000_000.0
     WINDOW_DAYS = {"1w": 7, "1m": 30, "3m": 90}
-    NASDAQ_MICS = ("XSTO", "SSME")
+    NASDAQ_MICS = ("XSTO", "SSME", "XCSE", "DSME", "XHEL", "FSME")
     OTHER_MICS = ("XSAT", "XNGM", "NSME")
     ALL_MICS = NASDAQ_MICS + OTHER_MICS
-    REGULATED_MICS = {"XSTO", "XNGM"}
+    DEFAULT_MICS = ("XSTO", "SSME", "XSAT", "XNGM", "NSME")
+    REGULATED_MICS = {"XSTO", "XCSE", "XHEL", "XNGM"}
     VENUE_LABEL = {}
 
     class Budget(object):
@@ -368,6 +377,9 @@ else:                                                    # pragma: no cover
 
     def fetch_nasdaq_snapshot(market="STO"):
         return None, None, "market_universe.py not importable"
+
+    def fetch_nasdaq_snapshots(mics):
+        return [], {}, {"STO": "market_universe.py not importable"}
 
     def fetch_firds(mics):
         return {}, {m: "market_universe.py not importable" for m in mics}
@@ -890,7 +902,7 @@ def short_signal(short_data, candidate, as_of_date):
 
 def _parse_venues(raw):
     if not raw:
-        return list(ALL_MICS)
+        return list(DEFAULT_MICS)
     out = []
     for tok in raw.split(","):
         mic = tok.strip().upper()
@@ -909,11 +921,11 @@ def run(args):
     mics = _parse_venues(args.venue)
     nasdaq_mics = [m for m in mics if m in NASDAQ_MICS]
 
-    nasdaq_rows, nasdaq_liq, nasdaq_err = (None, None, None)
-    if nasdaq_mics:
-        nasdaq_rows, nasdaq_liq, nasdaq_err = fetch_nasdaq_snapshot("STO")
-        if nasdaq_err:
-            notes.append("Nasdaq universe/liquidity: %s" % nasdaq_err)
+    nasdaq_rows, nasdaq_liq, nasdaq_errors = fetch_nasdaq_snapshots(nasdaq_mics)
+    for market, why in sorted(nasdaq_errors.items()):
+        notes.append("Nasdaq %s universe/liquidity: %s - this market is "
+                     "missing from the universe, the run is partial"
+                     % (market, why))
 
     # Belt-and-braces: refuse to publish a report built entirely from a
     # screener snapshot the market has not opened yet to populate. This is
@@ -1279,7 +1291,9 @@ def main():
     ap.add_argument("--window", choices=["1w", "1m"], default="1m",
                     help="return window the worst decile is selected on (default 1m)")
     ap.add_argument("--venue", metavar="LIST",
-                    help="comma list of xsto,ssme,xsat,xngm,nsme (default: all five)")
+                    help="comma list of MICs: xsto,ssme,xsat,xngm,nsme (SE), "
+                         "xcse,dsme (DK), xhel,fsme (FI). "
+                         "Default: the five Swedish venues")
     ap.add_argument("--limit", type=int, default=20,
                     help="max candidates printed per bucket (default 20)")
     ap.add_argument("--liquidity-floor", type=float, metavar="SEK",
@@ -1708,10 +1722,15 @@ def _selftest():
     n += 2
 
     # -- _parse_venues rejects an unknown MIC and defaults to all five -------
-    _assert(_parse_venues(None) == list(ALL_MICS), "no --venue must mean all five MICs")
+    _assert(_parse_venues(None) == list(DEFAULT_MICS),
+            "no --venue must mean the five Swedish MICs, not the whole Nordic set")
+    _assert(_parse_venues("xcse,xhel") == ["XCSE", "XHEL"],
+            "Danish and Finnish MICs must be selectable")
     _assert(_parse_venues("xsto,ssme") == ["XSTO", "SSME"], "venue list must parse in order")
+    _assert(_parse_venues("xosl,merk") == ["XOSL", "MERK"], "Oslo MICs must be selectable")
     try:
-        _parse_venues("xosl")
+        # Was "xosl" until Oslo was opened. Paris is not covered here.
+        _parse_venues("xpar")
         _assert(False, "an unknown venue must raise ValueError")
     except ValueError:
         pass

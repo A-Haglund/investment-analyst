@@ -618,8 +618,29 @@ def download_attachments(item, directory):
     return saved
 
 
+def _searchable(term):
+    """MFN's search endpoint answers HTTP 500 to any query containing a
+    slash - measured, not assumed: "Matas" and "Matas AS" both return hits
+    where "Matas A/S" 500s. A/S is the standard Danish and Norwegian company
+    form, so leaving the slash in place silently disables every MFN lookup
+    for those markets while looking like an outage.
+
+    Only the slash is removed, and it is removed rather than replaced with a
+    space: "A/S" -> "AS", which is measured to work, where "A S" 500s in turn.
+    The legal-form token survives, so a name that is only distinguishable by
+    it still is.
+
+    Scope note: MFN also 500s on a query ENDING in a lone single-letter token
+    ("Volvo A"). That is the same server-side quirk, but fixing it would mean
+    changing what was asked rather than how it is encoded, so callers strip
+    share-class suffixes themselves (market_universe._strip_class_suffix) and
+    this function leaves them alone.
+    """
+    return (term or "").replace("/", "").strip()
+
+
 def search(term, limit=12):
-    data = fetch("/all/s.json", query=term, limit=limit)
+    data = fetch("/all/s.json", query=_searchable(term), limit=limit)
     seen, out = set(), []
     for it in data.get("items") or []:
         a = it.get("author") or {}

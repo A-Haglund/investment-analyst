@@ -443,16 +443,21 @@ class PercentileRankIsStrictlyLessThan(unittest.TestCase):
 
 
 class ParseVenuesTests(unittest.TestCase):
-    def test_no_venue_means_all_five(self):
-        self.assertEqual(sd._parse_venues(None), list(sd.ALL_MICS))
-        self.assertEqual(sd._parse_venues(""), list(sd.ALL_MICS))
+    def test_no_venue_means_the_five_swedish_venues(self):
+        # Not ALL_MICS: since DK and FI were opened, ALL_MICS is nine MICs
+        # and an unqualified run must still be the Swedish one it always was.
+        self.assertEqual(sd._parse_venues(None), list(sd.DEFAULT_MICS))
+        self.assertEqual(sd._parse_venues(""), list(sd.DEFAULT_MICS))
+        self.assertEqual(len(sd.DEFAULT_MICS), 5)
 
     def test_explicit_list_is_parsed_uppercased_in_order(self):
         self.assertEqual(sd._parse_venues("xsto,ssme"), ["XSTO", "SSME"])
 
     def test_unknown_venue_raises_value_error(self):
+        # Was "xosl" until Oslo was opened. Paris is not a venue this
+        # toolkit covers and is not about to become one.
         with self.assertRaises(ValueError):
-            sd._parse_venues("xosl")
+            sd._parse_venues("xpar")
 
 
 class CombineUniverseKeepsTheRegulatedVenueOnCollision(unittest.TestCase):

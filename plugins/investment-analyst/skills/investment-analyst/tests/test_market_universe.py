@@ -107,24 +107,46 @@ class ExtractionExposesEveryNameBothCallersNeed(unittest.TestCase):
 # venue/MIC tables: byte-for-byte what they always were
 # ---------------------------------------------------------------------------
 
-class VenueTablesAreUnchangedByTheMove(unittest.TestCase):
-    def test_nasdaq_mics_are_the_two_nordic_shares_covers(self):
-        self.assertEqual(mu.NASDAQ_MICS, ("XSTO", "SSME"))
+class VenueTablesArePinned(unittest.TestCase):
+    """These pinned the five Swedish venues from the v3.0.0 extraction until
+    Denmark and Finland were opened. They still exist for the same reason:
+    the venue tables are load-bearing and must not drift silently."""
+
+    def test_nasdaq_mics_are_the_six_nordic_shares_covers(self):
+        self.assertEqual(mu.NASDAQ_MICS,
+                         ("XSTO", "SSME", "XCSE", "DSME", "XHEL", "FSME"))
 
     def test_other_mics_are_the_three_identity_only_venues(self):
         self.assertEqual(mu.OTHER_MICS, ("XSAT", "XNGM", "NSME"))
 
-    def test_all_mics_is_nasdaq_plus_other_in_order(self):
-        self.assertEqual(mu.ALL_MICS, ("XSTO", "SSME", "XSAT", "XNGM", "NSME"))
+    def test_all_mics_is_nasdaq_plus_oslo_plus_other_in_order(self):
+        self.assertEqual(mu.ALL_MICS,
+                         ("XSTO", "SSME", "XCSE", "DSME", "XHEL", "FSME",
+                          "XOSL", "MERK", "XSAT", "XNGM", "NSME"))
 
-    def test_regulated_mics_are_xsto_and_xngm_only(self):
-        self.assertEqual(mu.REGULATED_MICS, {"XSTO", "XNGM"})
+    def test_oslo_mics_are_their_own_group(self):
+        # Euronext, not Nasdaq: a different price path, so they must not be
+        # in NASDAQ_MICS where fetch_nasdaq_snapshots would look for them.
+        self.assertEqual(mu.OSLO_MICS, ("XOSL", "MERK"))
 
-    def test_venue_label_covers_all_five_mics(self):
+    def test_default_mics_are_the_five_swedish_venues(self):
+        self.assertEqual(mu.DEFAULT_MICS,
+                         ("XSTO", "SSME", "XSAT", "XNGM", "NSME"))
+
+    def test_regulated_mics_are_the_main_markets_only(self):
+        # The First North segments (SSME/DSME/FSME), Euronext Growth Oslo
+        # (MERK) and the Swedish MTFs are not regulated markets, so ESEF does
+        # not apply to them.
+        self.assertEqual(mu.REGULATED_MICS,
+                         {"XSTO", "XCSE", "XHEL", "XOSL", "XNGM"})
+
+    def test_venue_label_covers_every_mic(self):
         self.assertEqual(set(mu.VENUE_LABEL), set(mu.ALL_MICS))
         self.assertEqual(mu.VENUE_LABEL["XSTO"], "Nasdaq Stockholm (main market)")
         self.assertEqual(mu.VENUE_LABEL["SSME"],
                          "Nasdaq First North Growth Market Sweden")
+        self.assertEqual(mu.VENUE_LABEL["XCSE"], "Nasdaq Copenhagen (main market)")
+        self.assertEqual(mu.VENUE_LABEL["XHEL"], "Nasdaq Helsinki (main market)")
 
     def test_default_liquidity_floor_is_two_million_sek(self):
         self.assertEqual(mu.DEFAULT_LIQUIDITY_FLOOR_SEK, 2_000_000.0)
