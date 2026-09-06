@@ -57,6 +57,7 @@ through screen_digest's re-exported names - and must keep passing unchanged).
 
 Python 3 stdlib only. Free, keyless, everywhere.
 """
+import bisect
 import datetime
 import os
 import re
@@ -89,19 +90,42 @@ try:
     import mfn_news
 except Exception:                                        # pragma: no cover
     mfn_news = None
+try:
+    import oslo_prices
+except Exception:                                        # pragma: no cover
+    oslo_prices = None
 
 
 DEFAULT_LIQUIDITY_FLOOR_SEK = 2_000_000.0
 WINDOW_DAYS = {"1w": 7, "1m": 30, "3m": 90}
 
-NASDAQ_MICS = ("XSTO", "SSME")        # covered by nordic_shares (price/turnover)
+NASDAQ_MICS = ("XSTO", "SSME", "XCSE", "DSME", "XHEL", "FSME")  # covered by nordic_shares (price/turnover)
+OSLO_MICS = ("XOSL", "MERK")           # Euronext, not Nasdaq: own price path
 OTHER_MICS = ("XSAT", "XNGM", "NSME")  # identity-only, via venues_se/FIRDS
-ALL_MICS = NASDAQ_MICS + OTHER_MICS
+ALL_MICS = NASDAQ_MICS + OSLO_MICS + OTHER_MICS
 
-REGULATED_MICS = {"XSTO", "XNGM"}     # ESEF applies; SSME/XSAT/NSME are MTFs
+# What a screen covers when --venue is not given. Sweden only: opening
+# Denmark and Finland to the toolkit is not the same as silently tripling
+# what an unqualified /screen run costs and reports. The Nordic run is one
+# flag away (--venue xsto,ssme,xcse,dsme,xhel,fsme).
+DEFAULT_MICS = ("XSTO", "SSME", "XSAT", "XNGM", "NSME")
+
+# REGULATED_MICS: Nasdaq main markets with ESEF (EU regulated markets).
+# XCSE/XHEL are Nasdaq main markets (Copenhagen/Helsinki) with price/turnover.
+# DSME/FSME are Nasdaq First North growth markets (Denmark/Finland) - MTFs, no ESEF.
+# XOSL is Oslo Bors main market (regulated, ESEF applies); MERK is Euronext
+# Growth Oslo, an MTF, so it is not in this set either.
+# SSME (First North Sweden) is also an MTF and not in this set.
+REGULATED_MICS = {"XSTO", "XCSE", "XHEL", "XOSL", "XNGM"}
 VENUE_LABEL = {
     "XSTO": "Nasdaq Stockholm (main market)",
     "SSME": "Nasdaq First North Growth Market Sweden",
+    "XCSE": "Nasdaq Copenhagen (main market)",
+    "DSME": "Nasdaq First North Growth Market Denmark",
+    "XHEL": "Nasdaq Helsinki (main market)",
+    "FSME": "Nasdaq First North Growth Market Finland",
+    "XOSL": "Oslo Bors (main market)",
+    "MERK": "Euronext Growth Oslo",
     "XSAT": "Spotlight Stock Market",
     "XNGM": "NGM Equity",
     "NSME": "Nordic SME",
@@ -229,6 +253,7 @@ def fetch_nasdaq_snapshot(market="STO"):
                             "name": r.get("fullName"), "isin": r.get("isin"),
                             "currency": r.get("currency"),
                             "segment": segment or "FIRST_NORTH",
+                            "market": market,
                             "sector": r.get("sector"),
                             "last": _num(r.get("lastSalePrice"))})
                 liq[obid] = {"turnover": _num(r.get("turnover")),
@@ -259,8 +284,196 @@ def fetch_firds(mics):
     return results, failed
 
 
-def _mic_for_nasdaq_segment(segment):
-    return "SSME" if segment == "FIRST_NORTH" else "XSTO"
+# The Nasdaq screener is queried per market, and one market answers for two
+# MICs (its main market and its First North segment). Both screens need the
+# same MIC -> market mapping, so it lives here once rather than in a copy each.
+NASDAQ_MARKET_FOR_MIC = {
+    "XSTO": "STO", "SSME": "STO",
+    "XCSE": "CPH", "DSME": "CPH",
+    "XHEL": "HEL", "FSME": "HEL",
+}
+
+
+# Which national market a MIC belongs to. Used for the size percentile, which
+# is context ("where does this sit among its own market's listed companies")
+# and must therefore never be computed across borders.
+COUNTRY_FOR_MIC = {
+    "XSTO": "SE", "SSME": "SE", "XSAT": "SE", "XNGM": "SE", "NSME": "SE",
+    "XCSE": "DK", "DSME": "DK",
+    "XHEL": "FI", "FSME": "FI",
+    "XOSL": "NO", "MERK": "NO",
+}
+
+
+def attach_size_percentile(issuers):
+    """Rank each issuer's market cap WITHIN ITS OWN NATIONAL MARKET, as
+    context only - never a filter.
+
+    The size band is one absolute SEK floor and ceiling for every market. If
+    the Danish and Finnish markets are systematically smaller than the Swedish
+    one, that single band lets through a larger share of them, and the run
+    tilts without saying so. This column is how that becomes visible.
+
+    Writes four fields per issuer:
+      size_percentile         0-100, share of its market ranked strictly below
+                              it, or None when it cannot be computed
+      size_percentile_n       how many issuers the percentile is out of - a
+                              percentile among six names is not a percentile
+                              among six hundred, and the reader must be able to
+                              tell them apart
+      size_percentile_is_floor  True when this issuer's own cap is `partial`
+                              (a floor, share classes missing), so its true
+                              rank can only be higher
+      size_percentile_status  why it is None, when it is
+
+    The population is whatever reached this stage with a market cap - not the
+    whole listed market - so the label says "screened peers", never "the
+    market".
+    """
+    by_country = {}
+    for iss in issuers:
+        primary = iss.get("primary") or {}
+        country = COUNTRY_FOR_MIC.get(primary.get("mic"))
+        cap = iss.get("market_cap_sek")
+        if country is None or cap is None:
+            continue
+        by_country.setdefault(country, []).append(cap)
+    for caps in by_country.values():
+        caps.sort()
+
+    for iss in issuers:
+        iss["size_percentile"] = None
+        iss["size_percentile_n"] = None
+        iss["size_percentile_is_floor"] = False
+        primary = iss.get("primary") or {}
+        country = COUNTRY_FOR_MIC.get(primary.get("mic"))
+        cap = iss.get("market_cap_sek")
+        if country is None:
+            iss["size_percentile_status"] = ("not checked - %s is not mapped to a "
+                                             "national market" % (primary.get("mic") or "unknown MIC"))
+            continue
+        if cap is None:
+            iss["size_percentile_status"] = "not checked - no market cap"
+            continue
+        caps = by_country[country]
+        below = bisect.bisect_left(caps, cap)
+        iss["size_percentile"] = 100.0 * below / len(caps)
+        iss["size_percentile_n"] = len(caps)
+        iss["size_percentile_is_floor"] = iss.get("market_cap_status") == "partial"
+        iss["size_percentile_status"] = "checked"
+
+
+# Oslo Bors has no Nasdaq orderbook id, and the whole downstream pipeline -
+# fetch_history_parallel, returns_by_obid, select_primary_instrument,
+# compute_issuer_turnover - is keyed on one. Rather than thread a second key
+# through all of it, an Oslo row gets a synthetic id built from its ISIN. It
+# is prefixed so it can never be mistaken for a real orderbook id and handed
+# to the Nasdaq endpoint.
+OSLO_OBID_PREFIX = "OSLO:"
+
+
+def oslo_obid(isin):
+    return OSLO_OBID_PREFIX + isin
+
+
+def isin_from_oslo_obid(obid):
+    """The ISIN behind a synthetic Oslo id, or None if this is a real one."""
+    if isinstance(obid, str) and obid.startswith(OSLO_OBID_PREFIX):
+        return obid[len(OSLO_OBID_PREFIX):]
+    return None
+
+
+def fetch_oslo_bars(row, _module=None):
+    """Daily bars for one Oslo row, in the shape _fetch_bars_for_instrument
+    returns: {"status", "bars", "reason"}.
+
+    Also stamps the row's quote currency from the payload. Oslo Bors is
+    mostly NOK but not only, and _instrument_turnover_sek defaults an unknown
+    currency to SEK - which for a NOK line is a 3% error and for a USD one is
+    a factor of nine. The currency is read, never assumed: a payload that
+    does not state it leaves the row's currency unset, and the turnover leg
+    then refuses instead of converting.
+    """
+    mod = _module if _module is not None else oslo_prices
+    if mod is None:
+        return {"status": "not checked", "bars": None,
+                "reason": "oslo_prices.py not importable"}
+    isin = row.get("isin")
+    if not isin:
+        return {"status": "not checked", "bars": None, "reason": "row has no ISIN"}
+    try:
+        bars = mod.bars_for_isin(isin)
+    except (Exception, SystemExit) as exc:
+        return {"status": "not checked", "bars": None, "reason": str(exc)}
+    if not bars:
+        return {"status": "not checked", "bars": None,
+                "reason": "no Oslo price bars for %s" % isin}
+    for bar in bars:
+        if bar.get("currency"):
+            row["currency"] = bar["currency"]
+            break
+    # Nasdaq rows get their `price` from the screener snapshot; an Oslo row
+    # has no snapshot, so without this the screen prints a candidate with no
+    # price at all. The last bar with a close is that price.
+    for bar in reversed(bars):
+        if bar.get("close") is not None:
+            row["price"] = bar["close"]
+            break
+    return {"status": "checked", "bars": bars, "reason": None}
+
+
+def fetch_nasdaq_snapshots(mics, _fetch=None):
+    """fetch_nasdaq_snapshot() over every Nasdaq market the requested MICs
+    touch, merged into one universe. Returns (rows, liquidity_by_obid,
+    errors_by_market).
+
+    `_fetch` overrides the per-market fetcher. The screens pass their OWN
+    module-level fetch_nasdaq_snapshot so that replacing that name - which is
+    how every existing screen test injects a fake universe - still keeps the
+    whole pipeline offline. Without it the seam is silently bypassed and the
+    suite starts calling Nasdaq for real.
+
+    A market that fails is recorded in `errors_by_market`, never folded into
+    the rows: the caller must be able to say the universe is partial rather
+    than present a Stockholm-only run as if it covered the Nordics. Orderbook
+    ids are unique across Nasdaq Nordic, so merging the liquidity maps cannot
+    collide.
+    """
+    markets = sorted({NASDAQ_MARKET_FOR_MIC[m] for m in mics
+                      if m in NASDAQ_MARKET_FOR_MIC})
+    fetch = _fetch or fetch_nasdaq_snapshot
+    rows, liq, errors = [], {}, {}
+    for market in markets:
+        m_rows, m_liq, err = fetch(market)
+        if err:
+            errors[market] = err
+        rows.extend(m_rows or [])
+        liq.update(m_liq or {})
+    return rows, liq, errors
+
+
+def _mic_for_nasdaq_segment(segment, market="STO"):
+    """Map Nasdaq segment name to MIC for a given market.
+
+    The same segment name (e.g. "FIRST_NORTH") means a different MIC
+    per market: STO -> XSTO/SSME, CPH -> XCSE/DSME, HEL -> XHEL/FSME.
+    Defaults to Stockholm (STO) for backward compatibility.
+    """
+    if segment == "FIRST_NORTH":
+        if market == "CPH":
+            return "DSME"
+        elif market == "HEL":
+            return "FSME"
+        else:  # STO and default
+            return "SSME"
+    else:
+        # Main market
+        if market == "CPH":
+            return "XCSE"
+        elif market == "HEL":
+            return "XHEL"
+        else:  # STO and default
+            return "XSTO"
 
 
 def _blank_row(isin, name, mic):
@@ -304,7 +517,7 @@ def combine_universe(nasdaq_rows, nasdaq_liquidity, firds_by_mic, mics,
                 existing.setdefault("also_on", []).append(mic)
 
     for row in nasdaq_rows or []:
-        mic = _mic_for_nasdaq_segment(row.get("segment"))
+        mic = _mic_for_nasdaq_segment(row.get("segment"), market=row.get("market", "STO"))
         if mic not in mics:
             continue
         isin = row.get("isin")
@@ -323,6 +536,14 @@ def combine_universe(nasdaq_rows, nasdaq_liquidity, firds_by_mic, mics,
             c["percent_change_1d"] = liq.get("percent_change_1d")
             c["has_price_source"] = True
         combined[isin] = c
+
+    # Oslo rows come from FIRDS only - Euronext is not on the Nasdaq screener
+    # - so they reach here with no orderbook id and would be written off as
+    # having no price source. The synthetic id is what routes them to
+    # fetch_oslo_bars instead.
+    for row in combined.values():
+        if row.get("mic") in OSLO_MICS and not row.get("orderbookId"):
+            row["orderbookId"] = oslo_obid(row["isin"])
 
     for isin, info in (other_venue_turnover or {}).items():
         c = combined.get(isin)
@@ -855,6 +1076,17 @@ def attach_market_cap(issuers, budget=None):
             obid = row.get("orderbookId")
             if not obid:
                 missing_symbols.append(row.get("symbol") or "?")
+                continue
+            # A synthetic Oslo id is not a Nasdaq id. Sending it to
+            # nordic_shares.summary() returns HTTP 400, which then reads as
+            # "Nasdaq Nordic unreachable" - an outage message for what is
+            # really a missing source. This toolkit has no free share-count
+            # feed for Oslo Bors, and the output must say that.
+            if isin_from_oslo_obid(obid):
+                missing_symbols.append(row.get("symbol") or row.get("isin") or "?")
+                errors.append((row.get("symbol") or row.get("isin") or "?",
+                               "no free share-count source for Oslo Bors in "
+                               "this toolkit - market cap not computed"))
                 continue
 
             # Fetch per-class share count

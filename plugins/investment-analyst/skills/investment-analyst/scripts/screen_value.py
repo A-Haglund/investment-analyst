@@ -202,6 +202,13 @@ else:
 
 if market_universe is not None:
     fetch_nasdaq_snapshot = market_universe.fetch_nasdaq_snapshot
+
+    def fetch_nasdaq_snapshots(mics):
+        # Routed through this module's own fetch_nasdaq_snapshot so that
+        # replacing that name still intercepts every market's fetch.
+        return market_universe.fetch_nasdaq_snapshots(
+            mics, _fetch=lambda market: fetch_nasdaq_snapshot(market))
+
     fetch_firds = market_universe.fetch_firds
     combine_universe = market_universe.combine_universe
     group_by_issuer = market_universe.group_by_issuer
@@ -210,6 +217,7 @@ if market_universe is not None:
     select_primary_instrument = market_universe.select_primary_instrument
     apply_liquidity_floor = market_universe.apply_liquidity_floor
     attach_market_cap = market_universe.attach_market_cap
+    attach_size_percentile = market_universe.attach_size_percentile
     apply_size_band = market_universe.apply_size_band
     check_corporate_actions = market_universe.check_corporate_actions
     data_confidence = market_universe.data_confidence
@@ -217,6 +225,7 @@ if market_universe is not None:
     NASDAQ_THROTTLE = market_universe.NASDAQ_THROTTLE
     REGULATED_MICS = market_universe.REGULATED_MICS
     ALL_MICS = market_universe.ALL_MICS
+    DEFAULT_MICS = market_universe.DEFAULT_MICS
     NASDAQ_MICS = market_universe.NASDAQ_MICS
     VENUE_LABEL = market_universe.VENUE_LABEL
     DEFAULT_LIQUIDITY_FLOOR_SEK = market_universe.DEFAULT_LIQUIDITY_FLOOR_SEK
@@ -224,6 +233,10 @@ if market_universe is not None:
 else:                                                         # pragma: no cover
     def fetch_nasdaq_snapshot(market="STO"):
         return None, None, "market_universe.py not importable: %s" % _MU_IMPORT_ERROR
+
+    def fetch_nasdaq_snapshots(mics):
+        return [], {}, {"STO": "market_universe.py not importable: %s"
+                        % _MU_IMPORT_ERROR}
 
     def fetch_firds(mics):
         return {}, {m: "market_universe.py not importable" for m in mics}
@@ -258,6 +271,14 @@ else:                                                         # pragma: no cover
     def attach_market_cap(issuers, budget=None):
         for iss in issuers:
             iss["market_cap_sek"] = None
+
+    def attach_size_percentile(issuers):
+        for iss in issuers:
+            iss["size_percentile"] = None
+            iss["size_percentile_n"] = None
+            iss["size_percentile_is_floor"] = False
+            iss["size_percentile_status"] = ("not checked - market_universe.py "
+                                             "not importable")
             iss["market_cap_status"] = "not_checked"
             iss["market_cap_basis"] = "market_universe.py not importable"
             iss["market_cap_error"] = "market_universe.py not importable"
@@ -307,6 +328,7 @@ else:                                                         # pragma: no cover
     REGULATED_MICS = set()
     ALL_MICS = ()
     NASDAQ_MICS = ()
+    DEFAULT_MICS = ()
     VENUE_LABEL = {}
     DEFAULT_LIQUIDITY_FLOOR_SEK = 2_000_000.0
 
@@ -391,7 +413,7 @@ def today():
 
 def _parse_venues(raw):
     if not raw:
-        return list(ALL_MICS)
+        return list(DEFAULT_MICS)
     out = []
     for tok in raw.split(","):
         mic = tok.strip().upper()
@@ -409,6 +431,12 @@ def _parse_venues(raw):
 
 def _fetch_bars_for_instrument(row, from_date, to_date):
     obid = row.get("orderbookId")
+    # An Oslo row carries a synthetic id (market_universe.oslo_obid) rather
+    # than a Nasdaq one, and its bars come from Euronext + Yahoo instead.
+    # Routing on the prefix keeps the rest of the pipeline - returns_by_obid,
+    # select_primary_instrument, compute_issuer_turnover - unchanged.
+    if market_universe is not None and market_universe.isin_from_oslo_obid(obid):
+        return market_universe.fetch_oslo_bars(row)
     if not obid or nordic_shares is None:
         return {"status": "not checked", "bars": None,
                 "reason": "no Nasdaq orderbook id - no free price-history source "
@@ -594,7 +622,7 @@ def evaluate_margins(issuer, as_of, gross_floor, op_floor, margin_mode="either",
     if mic not in REGULATED_MICS:
         return {"outcome": "not_classified",
                 "reason": "%s is not a regulated market (ESEF applies only to "
-                          "XSTO/XNGM) - this issuer files no ESEF annual report "
+                          "XSTO/XCSE/XHEL/XNGM) - this issuer files no ESEF annual report "
                           "at all" % (mic or "unknown venue")}
     lei = issuer.get("lei")
     if not lei:
@@ -643,6 +671,10 @@ def _public_issuer(iss, extra=None):
           "market_cap_status": iss.get("market_cap_status"),
           "market_cap_basis": iss.get("market_cap_basis"),
           "size_status": iss.get("size_status"),
+          "size_percentile": iss.get("size_percentile"),
+          "size_percentile_n": iss.get("size_percentile_n"),
+          "size_percentile_is_floor": iss.get("size_percentile_is_floor"),
+          "size_percentile_status": iss.get("size_percentile_status"),
           "drawdown": iss.get("drawdown"),
           "return_365_pct": iss.get("return_365")}
     if extra:
@@ -666,11 +698,11 @@ def run(args):
     mics = _parse_venues(args.venue)
     nasdaq_mics = [m for m in mics if m in NASDAQ_MICS]
 
-    nasdaq_rows, nasdaq_liq, nasdaq_err = (None, None, None)
-    if nasdaq_mics:
-        nasdaq_rows, nasdaq_liq, nasdaq_err = fetch_nasdaq_snapshot("STO")
-        if nasdaq_err:
-            notes.append("Nasdaq universe/liquidity: %s" % nasdaq_err)
+    nasdaq_rows, nasdaq_liq, nasdaq_errors = fetch_nasdaq_snapshots(nasdaq_mics)
+    for market, why in sorted(nasdaq_errors.items()):
+        notes.append("Nasdaq %s universe/liquidity: %s - this market is "
+                     "missing from the universe, the run is partial"
+                     % (market, why))
 
     firds_by_mic, firds_failed = fetch_firds(mics)
     for mic, why in firds_failed.items():
@@ -740,6 +772,7 @@ def run(args):
         # cap_floor and cap_ceiling are None to preserve default run cost
         if market_universe is not None:
             attach_market_cap(survivors, budget=budget)
+            attach_size_percentile(survivors)
             pre_size_band_keys = {iss["key"] for iss in survivors}
             survivors, size_cuts = apply_size_band(
                 survivors, cap_floor=args.cap_floor, cap_ceiling=args.cap_ceiling)
@@ -908,6 +941,17 @@ def _fmt_margin(m):
               m.get("fiscal_period_end"), m.get("age_months", -1), m.get("margin_trend")))
 
 
+def _fmt_percentile(c):
+    """The size band is one absolute SEK range for every market, so where a
+    name sits within ITS OWN market is context the band itself cannot show.
+    Never a filter - see market_universe.attach_size_percentile."""
+    pct, n = c.get("size_percentile"), c.get("size_percentile_n")
+    if pct is None or not n:
+        return ""
+    return ", %sP%.0f of %d screened peers in its market" % (
+        "at least " if c.get("size_percentile_is_floor") else "", pct, n)
+
+
 def print_text(result):
     print("DEEP VALUE SCREEN - as of %s" % result["as_of"])
     print("Drawdown floor -%.0f%%, gross/operating margin floor %.0f%%/%.0f%%, "
@@ -938,12 +982,18 @@ def print_text(result):
                 _fmt_pct(dd.get("drawdown_pct")), dd.get("high_date"),
                 _fmt_pct(c.get("return_365_pct"))))
         print("      %s" % _fmt_margin(c.get("margins")))
+        price, ccy = c.get("price"), c.get("currency")
+        if price is not None:
+            # Local currency, always named: the trigger has to match what the
+            # broker shows, and an unlabelled 43.20 is three different prices.
+            print("      last %s %s" % ("{:,.2f}".format(price), ccy or "currency unknown"))
         mc, mc_status = c.get("market_cap_sek"), c.get("market_cap_status")
         if mc is not None:
-            print("      market cap %s SEK (%s)"
+            print("      market cap %s SEK (%s)%s"
                  % ("{:,.0f}".format(mc),
                     "listed classes, a floor" if mc_status == "partial"
-                    else "listed classes summed per class"))
+                    else "listed classes summed per class",
+                    _fmt_percentile(c)))
         elif mc_status:
             print("      market cap %s" % (c.get("size_status") or mc_status))
         print("      %s" % (c.get("data_confidence") or {}).get("label", ""))
@@ -990,7 +1040,10 @@ def main():
                     dest="liquidity_floor")
     ap.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
     ap.add_argument("--budget", type=float, default=DEFAULT_BUDGET_SECONDS)
-    ap.add_argument("--venue", default=None, help="comma list, e.g. xsto,xngm")
+    ap.add_argument("--venue", default=None,
+                    help="comma list of MICs: xsto,ssme,xsat,xngm,nsme (SE), "
+                         "xcse,dsme (DK), xhel,fsme (FI). "
+                         "Default: the five Swedish venues")
     ap.add_argument("--include-illiquid", action="store_true", dest="include_illiquid")
     ap.add_argument("--cap-floor", type=float, default=None, dest="cap_floor")
     ap.add_argument("--cap-ceiling", type=float, default=None, dest="cap_ceiling")
