@@ -1,6 +1,6 @@
 {
   "name": "investment-analyst",
-  "version": "3.3.0",
+  "version": "3.3.1",
   "description": "Sweden-first equity research on free, keyless primary sources — no API keys, no paid feeds, no identifying requests. Enforces provenance, temporal validity, source independence and the decision's own arithmetic in code rather than instructions. Plain-language answers; full evidence and valuation build on request. TTM engine, valuation gate, validated decision record with enforced conviction caps, falsifiable thesis ledger, portfolio review, 1000+ test regression suite. Screens Nasdaq Stockholm, Copenhagen and Helsinki plus Oslo Børs; Sweden remains the default.",
   "author": {
     "name": "Adam Haglund"
