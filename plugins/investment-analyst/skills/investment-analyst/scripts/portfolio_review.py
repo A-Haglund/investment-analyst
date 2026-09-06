@@ -107,6 +107,10 @@ portfolio_store = _soft_load("portfolio_store")
 # from, so importing is simpler and cheaper than a subprocess.
 quote = _soft_load("quote")
 mfn_news = _soft_load("mfn_news")
+# issuer_feed resolves issuer name to MFN/Cision slug, refusing when ambiguous.
+# MFN's /all/s.json is relevance-ranked by factors other than exact name, so
+# hits[0] is regularly a broker or regulator - this module applies strict rules.
+issuer_feed = _soft_load("issuer_feed")
 # insider_se is soft-loaded a second time here (fetching itself goes through
 # the CLI - see fetch_insider_activity) purely to reuse its own
 # NET BUYING/SELLING/FLAT threshold via direction_word(), rather than
@@ -355,14 +359,21 @@ def _run_cli_json(script, args, timeout=90):
         return None, "%s did not return valid JSON" % script
 
 
-def fetch_quote(holding):
+def fetch_quote(holding, currency=None):
     if quote is None:
         return None, "quote.py not available"
     symbol = holding.get("symbol")
     if not symbol:
         return None, "no symbol on this holding"
+    # Same mapping as portfolio_metrics: the stored ticker is Nasdaq-style and
+    # Yahoo needs the venue suffix. See quote.yahoo_symbol() for why the
+    # suffix is derived from the ISIN rather than assumed to be ".ST".
+    sym = symbol
+    if hasattr(quote, "yahoo_symbol"):
+        sym = quote.yahoo_symbol(symbol, holding.get("isin"),
+                                 currency=currency) or symbol
     try:
-        y = quote.from_yahoo(symbol)
+        y = quote.from_yahoo(sym)
     except (Exception, SystemExit) as exc:  # sibling scripts raise SystemExit, which is not an Exception
         return None, "quote lookup raised %s" % exc
     if not y or y.get("price") is None:
@@ -371,18 +382,67 @@ def fetch_quote(holding):
 
 
 def fetch_news_since(holding):
+    """News releases for one holding since last review.
+
+    MFN's /all/s.json is relevance-ranked by factors other than exact issuer
+    name, so hits[0] regularly points to a broker, regulator or research
+    publisher that mentioned the company, not the company's own newsroom.
+    issuer_feed.resolve() applies strict identity rules (refuse when ambiguous)
+    to pick the correct one. If issuer_feed is unavailable, we fall back to
+    MFN's search but prefer an exact name match over the top-ranked hit.
+    """
     if mfn_news is None:
         return None, "mfn_news.py not available"
     name = holding.get("name") or holding.get("symbol")
     if not name:
         return None, "no company name to search MFN for"
-    try:
-        hits = mfn_news.search(name)
-    except (Exception, SystemExit) as exc:  # sibling scripts raise SystemExit, which is not an Exception
-        return None, "MFN search failed: %s" % exc
-    if not hits:
-        return None, "no MFN slug found for %r" % name
-    slug = hits[0]["slug"]
+
+    # A stored slug is a MANUAL PIN, set by someone who resolved an ambiguous
+    # name by hand. It is honoured only for MFN: the slug goes straight to
+    # mfn_news.fetch_company_pages() below, which pages an MFN newsroom and
+    # nothing else. A Cision slug reaching it does not fail loudly - it fetches
+    # nothing, the item list comes back empty, and alert_new_report records a
+    # clean "no report since the last review" with checked=True. That is the
+    # confident-wrong-answer failure this whole path exists to remove, so a
+    # non-MFN pin is refused rather than used.
+    slug = holding.get("feed_slug")
+    pinned_venue = holding.get("feed_venue")
+    if slug and pinned_venue and pinned_venue != "MFN":
+        return None, ("holding pins a %s newsroom (%s), and this check can only "
+                      "page MFN - not checked rather than reported as quiet."
+                      % (pinned_venue, slug))
+
+    if not slug:
+        if issuer_feed is None:
+            # No local fallback on purpose. The pre-fix behaviour ended in
+            # hits[0], which is the defect issuer_feed was extracted to remove;
+            # keeping a second copy here "in case the first is missing" would
+            # reintroduce it exactly where it did the damage, and it would be
+            # the copy nothing tests. corporate_actions.collect_mfn refuses to
+            # keep such a fallback for the same reason.
+            return None, ("issuer_feed.py not available - a newsroom cannot be "
+                          "resolved without it, so this check did not run.")
+
+        # mfn_news.search is passed explicitly rather than left to issuer_feed's
+        # own module handle: `mfn_news` above is the seam the tests monkeypatch,
+        # and resolving through a second handle on the same module would ignore
+        # those patches and send unit tests to the live network.
+        #
+        # Cision is stubbed out for the same reason the pin is restricted above -
+        # there is no Cision fetch leg here yet, so a Cision slug would be a
+        # slug this function cannot use.
+        _venue, slug, _label, note = issuer_feed.resolve(
+            name,
+            search_mfn=lambda q: mfn_news.search(q),
+            search_cision=lambda q: [])
+        if note:
+            # Ambiguity, no match, or an outage. All three are "could not
+            # check" as far as the caller is concerned; issuer_feed's note says
+            # which, and alert_new_report turns any error into checked=False.
+            return None, note
+        if not slug:
+            return None, "no MFN newsroom found for %r" % name
+
     try:
         raw = mfn_news.fetch_company_pages(slug, pages=1)
     except (Exception, SystemExit) as exc:  # sibling scripts raise SystemExit, which is not an Exception
@@ -776,7 +836,7 @@ def run(name, layer, as_json, fetch_prices=True):
     for h in holdings:
         price_info = None
         if fetch_prices and layer in (2, "all"):
-            price_info, _perr = fetch_quote(h)
+            price_info, _perr = fetch_quote(h, portfolio.get("currency"))
         rec = build_holding_record(h, layer if layer in (1, 2) else "all",
                                     price_info=price_info)
         records.append(rec)

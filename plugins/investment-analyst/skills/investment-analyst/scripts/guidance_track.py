@@ -2424,24 +2424,6 @@ def _execution_score_with_coverage(execution_score, history, store_key):
 # Orchestration
 # ---------------------------------------------------------------------------
 
-def _dedupe_by_slug(hits):
-    out, seen = [], set()
-    for h in hits:
-        slug = h.get("slug")
-        if slug and slug not in seen:
-            seen.add(slug)
-            out.append(h)
-    return out
-
-
-def _identity_ambiguous(venue, name, cands):
-    listing = ", ".join("%s (%s)" % (c["name"], c["slug"]) for c in cands)
-    return ("COMPANY_IDENTITY_AMBIGUOUS: %d distinct %s issuers match %r (%s). "
-            "Attributing a guidance record to the wrong one is silent and looks "
-            "identical to a correct answer - re-run with the exact legal name."
-            % (len(cands), venue, name, listing))
-
-
 def resolve_company(name):
     """Find the company on MFN first, then Cision. Returns (venue, slug, label, note).
 
@@ -2451,52 +2433,52 @@ def resolve_company(name):
     happened to come first win: venue/slug/label come back None and `note`
     names every candidate seen, the same discipline company_resolve.py's
     brand guard applies.
+
+    This function has one unique requirement: for MFN candidates, it verifies
+    that the newsroom actually has archive history by probing mfn_archive().
+    Guidance tracking needs a newsroom with history, not merely a newsroom.
+    If an MFN archive probe fails, the function falls through to Cision.
+
+    Deliberately NO local fallback implementation. issuer_feed.py lives in
+    this same folder, imports nothing risky at module scope, and is the single
+    home for this logic - three divergent copies of it are what made a real
+    misattribution bug survive in portfolio_review.py. A second copy kept here
+    "in case the first is missing" would reintroduce exactly that, and would
+    drift the moment either side is touched. If it cannot be imported, this
+    refuses and says so: a resolution that could not run is not a resolution
+    that passed.
     """
     try:
-        hits = MFN.search(name)
-    except SystemExit:
-        hits = []
-    needle = name.lower()
+        import issuer_feed
+    except (Exception, SystemExit):  # SystemExit does not inherit from Exception
+        return None, None, None, ("issuer_feed.py not available - a newsroom "
+                                  "cannot be resolved without it.")
 
-    named = _dedupe_by_slug([h for h in hits if needle in (h["name"] or "").lower()
-                             or needle in h["slug"]])
-    with_archive = []
-    for h in named:
-        items, _ = mfn_archive(h["slug"], want=60)
+    # The searchers are passed in explicitly rather than left to issuer_feed's
+    # own module handles. Two reasons, and the second is the load-bearing one:
+    # this file already imports mfn_news as MFN and cision_news as CIS, so
+    # resolving through anything else would mean two handles on the same
+    # module; and MFN/CIS are the seam every test in this repo monkeypatches.
+    # Resolving through issuer_feed's private handles instead silently ignores
+    # those patches and sends unit tests to the live network.
+    _search_mfn = lambda q: MFN.search(q)          # noqa: E731
+    _search_cision = lambda q: CIS.resolve(q)      # noqa: E731
+
+    venue, slug, label, note = issuer_feed.resolve(
+        name, search_mfn=_search_mfn, search_cision=_search_cision)
+
+    if venue == "MFN" and note is None:
+        # The one domain-specific rule guidance_track keeps: a newsroom is only
+        # useful here if it actually carries history. Guidance tracking reads a
+        # company's own past statements, so an empty newsroom is the same as no
+        # newsroom - fall through to Cision rather than accept it.
+        items, _ = mfn_archive(slug, want=60)
         if items:
-            with_archive.append(h)
-    if len(with_archive) > 1:
-        return None, None, None, _identity_ambiguous("MFN", name, with_archive)
-    if with_archive:
-        h = with_archive[0]
-        return "MFN", h["slug"], h["name"], None
+            return venue, slug, label, note
+        venue, slug, label, note = issuer_feed.resolve(
+            name, search_mfn=lambda q: [], search_cision=_search_cision)
 
-    try:
-        chits = CIS.resolve(name)
-    except SystemExit:
-        chits = []
-    cnamed = _dedupe_by_slug([h for h in chits if needle in (h["name"] or "").lower()
-                              or needle in h["slug"]])
-    if len(cnamed) > 1:
-        return None, None, None, _identity_ambiguous("Cision", name, cnamed)
-    if cnamed:
-        h = cnamed[0]
-        return "Cision", h["slug"], h["name"], None
-
-    # Last-resort fallback: neither search matched on name/slug at all, so
-    # fall back to whatever the search engine ranked first - but still refuse
-    # rather than guess if that raw result set itself spans more than one
-    # issuer.
-    hits_d, chits_d = _dedupe_by_slug(hits), _dedupe_by_slug(chits)
-    if len(hits_d) > 1:
-        return None, None, None, _identity_ambiguous("MFN", name, hits_d)
-    if hits_d:
-        return "MFN", hits_d[0]["slug"], hits_d[0]["name"], None
-    if len(chits_d) > 1:
-        return None, None, None, _identity_ambiguous("Cision", name, chits_d)
-    if chits_d:
-        return "Cision", chits_d[0]["slug"], chits_d[0]["name"], None
-    return None, None, None, None
+    return venue, slug, label, note
 
 
 def run(name, do_ir=True, esef_country="SE", limit_releases=500,

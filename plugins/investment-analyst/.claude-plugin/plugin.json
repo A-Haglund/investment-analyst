@@ -1,6 +1,6 @@
 {
   "name": "investment-analyst",
-  "version": "3.1.0",
+  "version": "3.2.3",
   "description": "Sweden-first equity research on free, keyless primary sources — no API keys, no paid feeds, no identifying requests. Enforces provenance, temporal validity, source independence and the decision's own arithmetic in code rather than instructions. Plain-language answers; full evidence and valuation build on request. TTM engine, valuation gate, validated decision record with enforced conviction caps, falsifiable thesis ledger, portfolio review, 800+ test regression suite.",
   "author": {
     "name": "Adam Haglund"

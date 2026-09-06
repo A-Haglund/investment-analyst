@@ -105,6 +105,27 @@ def _cache_path(key):
     return os.path.join(CACHE, safe)
 
 
+def fetch_json_uncached(url):
+    """GET JSON with no cache. Returns parsed JSON, or None on failure.
+
+    The uncached sibling of fetch_json_cached, for a request whose address is
+    not stable enough to cache - an offset into a feed that shifts with every
+    new publication. Same None-on-failure contract, so a caller can tell a
+    failed fetch from an empty answer.
+    """
+    req = urllib.request.Request(url, headers={"User-Agent": UA,
+                                               "Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            body = r.read()
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError):
+        return None
+    try:
+        return json.loads(body)
+    except ValueError:
+        return None
+
+
 def fetch_json_cached(url, cache_key, ttl):
     """GET JSON with an on-disk cache. Returns parsed JSON, or None on failure.
 
@@ -173,6 +194,122 @@ def fetch_company_pages(slug, pages=None, since=None, auto_pages=DEFAULT_AUTO_PA
         if since and oldest and oldest < since:
             break
     return items
+
+
+def fetch_nordic_since(since, max_items=600, page=100):
+    """Every Nordic release published at or after `since`, newest first.
+
+    Pages /all/s/nordic.json?limit=N&offset=M until the oldest item in a
+    page is older than `since`, or `max_items` is reached, or a page comes
+    back empty. Returns the items that are at or after `since`, each carrying
+    its issuer's slug in author.slug for the caller to filter locally.
+
+    CRITICAL — do not use a fixed `limit` and hope it reaches far enough.
+    On a heavy reporting morning (07:30 during Q-season) 100 releases can
+    span twenty minutes, not 27 hours. Paging until the cutoff is crossed
+    is the whole point of the function; a fixed window silently misses
+    exactly what the caller is watching for, on the day it matters most.
+
+    `since` accepts either an ISO date/datetime string (YYYY-MM-DD or later
+    format) or a datetime.date or datetime.datetime object. Comparison is
+    against each item's content.publish_date, truncated to YYYY-MM-DD.
+
+    `max_items` is a hard stop preventing an unbounded crawl when `since` is
+    far in the past. If the function returns fewer items than max_items and
+    continued paging until a page's oldest item predated `since`, the answer
+    is complete. If it returns exactly max_items items, the answer may be
+    incomplete — check if the oldest returned item's date is still recent
+    relative to when you expect releases to taper off.
+
+    Each returned item is in the same shape as fetch_company_pages() yields
+    and works with flatten(). Items are newest-first.
+    """
+    # Parse `since` into a normalised YYYY-MM-DD string.
+    #
+    # Normalised, not kept verbatim: the cutoff below is a STRING comparison,
+    # and strptime happily accepts "2026-1-5". Compared as text,
+    # "2026-01-10" < "2026-1-5" is True, so every item looked older than the
+    # cutoff and the function returned zero rows for a perfectly valid date -
+    # silently, with no error. Rebuilding the string from the parsed date
+    # makes the comparison total.
+    if isinstance(since, datetime.datetime):
+        since_date = since.date().isoformat()
+    elif isinstance(since, datetime.date):
+        since_date = since.isoformat()
+    elif isinstance(since, str):
+        try:
+            since_date = datetime.datetime.strptime(
+                since[:10], "%Y-%m-%d").date().isoformat()
+        except ValueError:
+            raise ValueError("since must be an ISO date/datetime (YYYY-MM-DD...) "
+                             "or a date/datetime object")
+    else:
+        raise TypeError("since must be a string, datetime.date, or datetime.datetime")
+
+    items, seen, offset, complete = [], set(), 0, True
+    while len(items) < max_items:
+        # CACHING, and why only the first page gets it.
+        #
+        # An offset into a site-wide feed is not a stable address: every new
+        # publication shifts every item down. Caching a deep offset for 30
+        # days - which this did, reusing fetch_company_pages' immutable-history
+        # rule - means page 2 is served from yesterday while page 1 is fresh,
+        # and the band of releases published in between is never returned by
+        # either. Traced: 150 published, in-range releases silently missing,
+        # with no error and a result that terminated "cleanly" on the cutoff.
+        #
+        # A single issuer's offsets shift by a few items a month, so the rule
+        # holds there. The Nordic-wide feed shifts by hundreds a morning. Only
+        # offset 0 is cached, briefly; deeper pages are ~330 ms and correctness
+        # is worth more than that.
+        url = BASE + "/all/s/nordic.json?" + urllib.parse.urlencode(
+            {"limit": page, "offset": offset})
+        if offset == 0:
+            data = fetch_json_cached(url, cache_key="nordic-%06d-%04d" % (offset, page),
+                                     ttl=CACHE_TTL_RECENT)
+        else:
+            data = fetch_json_uncached(url)
+
+        if data is None:
+            # A failed fetch is not the end of the feed. Reporting the rows
+            # gathered so far as a complete answer would turn an outage into
+            # "nothing else was published", which is a claim about the market
+            # that this run did not establish.
+            complete = False
+            break
+
+        page_items = data.get("items") or []
+        if not page_items:
+            break
+
+        hit_cutoff = False
+        for item in page_items:
+            content = item.get("content") or {}
+            item_date = (content.get("publish_date") or "")[:10]
+            if item_date and item_date < since_date:
+                hit_cutoff = True
+                break
+            # Dedupe across page boundaries: a release published between two
+            # page fetches shifts everything down by one, so the item at the
+            # end of page N reappears at the start of page N+1.
+            key = item.get("news_id") or (
+                (item.get("author") or {}).get("slug"),
+                content.get("publish_date"), content.get("title"))
+            if key in seen:
+                continue
+            seen.add(key)
+            items.append(item)
+            if len(items) >= max_items:
+                # The cap stopped us before the cutoff did, so there may be
+                # more in range. Say so rather than let the caller infer
+                # completeness from a length.
+                return items, False
+
+        if hit_cutoff:
+            return items, complete
+        offset += page
+
+    return items, complete
 
 
 def flatten(item):
@@ -494,6 +631,112 @@ def search(term, limit=12):
     return out
 
 
+def _selftest_fetch_nordic_since():
+    """Offline coverage for the Nordic firehose paging. No network.
+
+    Each case below is a bug that reached this function and was traced, not a
+    hypothetical. They are kept as regressions because every one of them
+    failed SILENTLY - wrong or missing rows, never an error.
+    """
+    # Patch this module's OWN globals, never `import mfn_news`. Run as
+    # `python mfn_news.py` the live module is __main__, and importing the name
+    # creates a SECOND copy - the fakes land on the copy while the functions
+    # under test keep calling the real fetchers, so the selftest quietly goes
+    # to the network and asserts against live data.
+    G = globals()
+
+    def install(pages, fail_at=None):
+        """Serve fixed pages by offset; optionally fail one of them."""
+        calls = []
+
+        def fake(url, *a, **kw):
+            off = int(url.split("offset=")[1].split("&")[0])
+            calls.append(off)
+            if fail_at is not None and off == fail_at:
+                return None
+            return {"items": pages.get(off, [])}
+
+        G["fetch_json_cached"] = lambda url, cache_key, ttl: fake(url)
+        G["fetch_json_uncached"] = fake
+        return calls
+
+    def item(nid, date, slug="acme"):
+        return {"news_id": nid, "author": {"slug": slug},
+                "content": {"publish_date": date + "T08:00:00", "title": "t%s" % nid}}
+
+    real_cached, real_uncached = fetch_json_cached, fetch_json_uncached
+    ok = 0
+    try:
+        # 1. Pages until the cutoff, and stops there.
+        install({0: [item(i, "2026-01-%02d" % (10 - i)) for i in range(3)],
+                 3: [item(3 + i, "2026-01-%02d" % (7 - i)) for i in range(3)]})
+        items, complete = fetch_nordic_since("2026-01-05", page=3)
+        assert [i["news_id"] for i in items] == [0, 1, 2, 3, 4, 5], [i.get("news_id") for i in items]
+        assert complete is True
+        ok += 1
+
+        # 2. A non-zero-padded date must not silently return nothing. The
+        #    cutoff is a string compare, and "2026-01-10" < "2026-1-5" is True.
+        items, complete = fetch_nordic_since("2026-1-5", page=3)
+        assert len(items) == 6, "unpadded date returned %d rows" % len(items)
+        ok += 1
+
+        # 3. max_items reports the answer as INCOMPLETE. A short list must not
+        #    be readable as "that was everything".
+        install({0: [item(i, "2026-01-10") for i in range(10)]})
+        items, complete = fetch_nordic_since("2026-01-01", max_items=4, page=10)
+        assert len(items) == 4 and complete is False, (len(items), complete)
+        ok += 1
+
+        # 4. A failed fetch mid-paging is NOT the end of the feed. Reporting
+        #    the rows gathered so far as complete turns an outage into a claim
+        #    that nothing else was published.
+        install({0: [item(i, "2026-01-10") for i in range(3)],
+                 3: [item(3 + i, "2026-01-09") for i in range(3)]}, fail_at=3)
+        items, complete = fetch_nordic_since("2026-01-01", page=3)
+        assert len(items) == 3 and complete is False, (len(items), complete)
+        ok += 1
+
+        # 5. Dedupe across page boundaries. A release published between two
+        #    page fetches shifts everything down, so the last item of page N
+        #    reappears as the first of page N+1.
+        install({0: [item(0, "2026-01-10"), item(1, "2026-01-09")],
+                 2: [item(1, "2026-01-09"), item(2, "2026-01-08")]})
+        items, _c = fetch_nordic_since("2026-01-01", page=2)
+        assert [i["news_id"] for i in items] == [0, 1, 2], [i.get("news_id") for i in items]
+        ok += 1
+
+        # 6. Only offset 0 is cached. A deep offset is not a stable address -
+        #    every publication shifts it - so caching it for 30 days served
+        #    page 2 from yesterday beside a fresh page 1 and dropped the band
+        #    in between. Proven here by which fetcher each offset uses.
+        seen = {"cached": [], "uncached": []}
+        G["fetch_json_cached"] = lambda url, cache_key, ttl: (
+            seen["cached"].append(url) or {"items": [item(0, "2026-01-10")]})
+        G["fetch_json_uncached"] = lambda url: (
+            seen["uncached"].append(url) or {"items": [item(1, "2026-01-02")]})
+        fetch_nordic_since("2026-01-01", page=1, max_items=2)
+        assert len(seen["cached"]) == 1 and "offset=0" in seen["cached"][0], seen
+        assert seen["uncached"] and all("offset=0&" not in u for u in seen["uncached"]), seen
+        ok += 1
+
+        # 7. Malformed input is refused, not guessed at.
+        for bad in ("2026-13-45", "not-a-date", 12345):
+            try:
+                fetch_nordic_since(bad)
+                raise AssertionError("accepted %r" % (bad,))
+            except (ValueError, TypeError):
+                pass
+        ok += 1
+    finally:
+        G["fetch_json_cached"] = real_cached
+        G["fetch_json_uncached"] = real_uncached
+
+    print("mfn_news fetch_nordic_since selftest: %d assertion groups ok "
+          "(no network calls made)" % ok)
+    return True
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -520,7 +763,13 @@ def main():
     ap.add_argument("--since", metavar="YYYY-MM-DD",
                     help="keep paging back until a release older than this date is "
                          "reached (capped at %d pages)" % MAX_PAGE_REQUESTS)
+    ap.add_argument("--selftest", action="store_true",
+                    help="run offline tests of fetch_nordic_since (no network calls)")
     args = ap.parse_args()
+
+    if args.selftest:
+        _selftest_fetch_nordic_since()
+        return
 
     since_date = None
     if args.since:
