@@ -1302,7 +1302,8 @@ class FullPipelineRoutesCandidatesCorrectly(unittest.TestCase):
                     obid, {"status": "not checked", "reason": "no fixture"})
             return out
 
-        def fake_check_corporate_action(name, date_from, last_close_date, date_to, price=None):
+        def fake_check_corporate_action(name, date_from, last_close_date, date_to,
+                                        price=None, mic=None):
             if name == "Splitty AB":
                 return {"status": "checked", "has_breaking_action": True,
                         "events": [{"date": "2026-08-15", "type": "SPLIT",
@@ -1540,7 +1541,8 @@ class FullPipelineReconcilesWithIncludeIlliquid(unittest.TestCase):
         def fake_fetch_returns_parallel(instruments, as_of_date, budget, max_workers=10):
             return {r["orderbookId"]: returns_by_obid.get(r["orderbookId"]) for r in instruments}
 
-        def fake_check_corporate_action(name, date_from, last_close_date, date_to, price=None):
+        def fake_check_corporate_action(name, date_from, last_close_date, date_to,
+                                        price=None, mic=None):
             return {"status": "checked", "has_breaking_action": False, "events": [],
                     "since_last_close": {"status": "checked", "count": 0, "events": [],
                                         "window": [last_close_date, date_to]}}

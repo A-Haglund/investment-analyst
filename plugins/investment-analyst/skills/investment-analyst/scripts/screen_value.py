@@ -288,7 +288,8 @@ else:                                                         # pragma: no cover
             iss["size_status"] = "not checked - market_universe.py not importable"
         return list(issuers), {"above_ceiling": 0, "below_floor": 0, "no_market_cap": 0}
 
-    def check_corporate_actions(name, date_from, last_close_date, date_to, price=None):
+    def check_corporate_actions(name, date_from, last_close_date, date_to,
+                                price=None, mic=None):
         return {"status": "not checked", "reason": "market_universe.py not importable"}
 
     def data_confidence(mic):
@@ -546,8 +547,11 @@ def evaluate_corporate_actions(issuer, drawdown):
     date_from = drawdown["high_date"]
     last_close_date = drawdown["last_date"]
     price = issuer["primary"].get("price")
+    # The MIC decides whether Nasdaq CNS covers this issuer at all. Without
+    # it an Oslo name falls through CNS's no-hits branch and the gate reports
+    # clean because it could not run.
     return check_corporate_actions(name, date_from, last_close_date, last_close_date,
-                                   price=price)
+                                   price=price, mic=issuer["primary"].get("mic"))
 
 
 # ---------------------------------------------------------------------------
