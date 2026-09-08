@@ -16,11 +16,11 @@ Use the `investment-analyst` skill.
 Strip the flag from the company name before resolving the ticker. State the
 depth you are running in the first line of the output.
 
-## Output sections and word budgets: SKILL.md §6.1
+## Output sections and word budgets: SKILL.md §6
 
 At DEEP every budget scales ×1.5. At QUICK, sections 3 and 5 are dropped and the rest are halved.
 
-## Tagging and uncertainty: SKILL.md §1 and §7.1
+## Tagging and uncertainty: SKILL.md §1 and §7
 
 ## Reader model: SKILL.md §7
 

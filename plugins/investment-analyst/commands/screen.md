@@ -10,7 +10,7 @@ ranking method.
 
 **Delivered length: the ranking table, plus 80 words per top candidate** (SKILL.md §4).
 
-## Tagging and uncertainty: SKILL.md §1 and §7.1
+## Tagging and uncertainty: SKILL.md §1 and §7
 
 ## Reader model: SKILL.md §7
 

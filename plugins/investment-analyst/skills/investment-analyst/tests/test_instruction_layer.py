@@ -92,15 +92,33 @@ class ReferenceResolution(unittest.TestCase):
                          "instructions name scripts that do not exist")
 
     def test_no_orphan_reference_files(self):
-        """A reference nothing points at is either dead or silently dropped."""
+        """A reference no LOAD INSTRUCTION points at is silently dropped.
+
+        Only SKILL.md and the command files cause a load. A sibling reference
+        citing a file is a cross-reference, read after the file is already in
+        context; counting those as "named" let a file whose every load
+        instruction had been deleted still pass.
+        """
         named = set()
-        for text in instruction_files().values():
-            named.update(REF_TOKEN.findall(text))
+        for label, text in instruction_files().items():
+            if label == "SKILL.md" or label.startswith("commands/"):
+                named.update(REF_TOKEN.findall(text))
         on_disk = {n for n in os.listdir(REFERENCES_DIR) if n.endswith(".md")}
         orphans = sorted(on_disk - named)
         self.assertEqual([], orphans,
-                         "reference files that no instruction loads: either "
-                         "wire them into a phase or delete them")
+                         "reference files no load instruction reaches: wire "
+                         "them into a phase or the §11 table, or delete them")
+
+    def test_every_reference_declares_a_load_condition(self):
+        """The §11 table is where "load when" lives; a file missing from it
+        has no declared condition, so nothing says when its rules arrive."""
+        skill = read(SKILL_MD)
+        table = skill[skill.index("## 11."):skill.index("## 12.")]
+        declared = set(REF_TOKEN.findall(table))
+        on_disk = {n for n in os.listdir(REFERENCES_DIR) if n.endswith(".md")}
+        missing = sorted(on_disk - declared)
+        self.assertEqual([], missing,
+                         "reference files with no row in the §11 load table")
 
     def test_skill_section_crossrefs_resolve(self):
         """A `§N` pointing at SKILL.md must match a numbered heading there."""
@@ -112,7 +130,10 @@ class ReferenceResolution(unittest.TestCase):
                 if "SKILL.md" not in line:
                     continue
                 for sec in SECTION_TOKEN.findall(line):
-                    if sec.split(".")[0] not in existing:
+                    # Exact match, not the part before the dot: SKILL.md
+                    # numbers only top-level sections, so "§6.1" points at
+                    # nothing and must not pass as "§6".
+                    if sec not in existing:
                         broken.append(f"{label}: SKILL.md §{sec}")
         self.assertEqual([], sorted(set(broken)),
                          "cross-references point at SKILL.md sections that do "
@@ -301,25 +322,26 @@ class ContextBudgets(unittest.TestCase):
 
     # file -> max characters
     BUDGETS = {
-        "SKILL.md": 58_000,
-        "references/answer-structure.md": 8_000,
+        "SKILL.md": 62_000,
+        "references/answer-structure.md": 6_000,
         "references/bear-case-and-scoring.md": 12_000,
-        "references/conviction.md": 5_000,
-        "references/data-quality.md": 15_000,
+        "references/conviction.md": 6_500,
+        "references/data-quality.md": 11_000,
         "references/data-sources.md": 26_000,
         "references/europe.md": 10_000,
         "references/fundamentals.md": 10_000,
         "references/moat-growth-management.md": 9_000,
-        "references/output-contract.md": 5_000,
         "references/portfolio.md": 18_000,
         "references/ranking.md": 3_000,
-        "references/red-flags-general.md": 24_000,
+        "references/red-flags-general.md": 18_500,
+        "references/red-flags-quick.md": 9_200,
         "references/red-flags-smallcap.md": 22_000,
         "references/scripts.md": 9_000,
         "references/source-registry.md": 15_000,
-        "references/sweden.md": 26_000,
-        "references/valuation-core.md": 10_000,
-        "references/valuation-dcf.md": 13_000,
+        "references/sweden.md": 21_000,
+        "references/sweden-deep.md": 9_200,
+        "references/valuation-core.md": 14_000,
+        "references/valuation-dcf.md": 9_000,
         "references/verification.md": 13_000,
     }
 

@@ -45,7 +45,9 @@ STORAGE
 
     Created lazily on first write, survives between runs, one file per issuer,
     and every file carries "schema_version" so the format can move.
-    Override the root with THESIS_LEDGER_HOME.
+    Override the root with THESIS_LEDGER_HOME, or with INVESTMENT_ANALYST_HOME
+    (shared by every store - see _bootstrap.state_home()) to move the whole
+    ~/.investment-analyst tree.
 
     Each file holds four data keys: theses, observations, decisions and the
     identity. "decisions" was added in v3.0.0 WITHOUT a schema bump - it is
@@ -157,6 +159,8 @@ def load(name):
     return mod
 
 
+_bootstrap = load("_bootstrap")
+
 finfact = load("finfact")
 FinancialFact = finfact.FinancialFact
 Verification = finfact.Verification
@@ -204,7 +208,7 @@ def ledger_home():
     override = os.environ.get("THESIS_LEDGER_HOME")
     if override:
         return os.path.abspath(override)
-    return os.path.join(os.path.expanduser("~"), ".investment-analyst", "thesis-ledger")
+    return os.path.join(_bootstrap.state_home(), "thesis-ledger")
 
 
 CACHE_DIR = os.path.join(tempfile.gettempdir(), "investment-analyst-cache", "thesis_ledger")

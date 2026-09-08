@@ -2,8 +2,8 @@
 
 Regulated-market issuers (Large Cap, Mid Cap, Small Cap) report under IFRS.
 First North (outside Premier), Spotlight and NGM issuers may report under
-Swedish GAAP instead — see "Accounting basis: IFRS or K3" below. Two structured
-routes exist, plus the report PDFs.
+Swedish GAAP instead — see `references/sweden-deep.md`'s "Accounting basis:
+IFRS or K3" section. Two structured routes exist, plus the report PDFs.
 
 ## Source chain
 
@@ -16,8 +16,8 @@ available under the ESEF regulation (`europe.md` has the EU-wide detail).
 Retrieve it with:
 
 ```bash
-python esef_fundamentals.py --search "Evolution" --country SE
-python esef_fundamentals.py 549300SUH6ZR1RF6TA88 --filings 3
+python esef_fundamentals.py --search "Evolution" --country SE --json
+python esef_fundamentals.py 549300SUH6ZR1RF6TA88 --filings 3 --json
 ```
 
 Two limits, both real:
@@ -32,39 +32,9 @@ Two limits, both real:
 ESEF covers **annual** reports only. Quarterly figures always come from the
 interim report.
 
-### 2. MFN.se — releases and report PDFs
-
-`scripts/mfn_news.py <slug> --reports` returns interim and annual reports with
-the PDF attached, in Swedish and English. This is the fastest route to the most
-recent quarter, and the only route to quarterly detail.
-
-MFN is a private distribution channel, not the regulatory archive — but it is
-where the issuer publishes, so the PDF it carries is the primary document.
-
-**MFN does not cover every Swedish issuer.** Verified 2026-08-31: Sandvik,
-Atlas Copco, Hexagon and AB Volvo all return an *empty feed* — they distribute
-through **Cision** instead. They still appear in MFN `--search` because other
-issuers reference them, which makes the gap easy to miss. For those companies:
-
-- annual figures → `esef_fundamentals.py --search "NAME" --country SE`
-- releases → `scripts/cision_news.py --search "NAME"` then
-  `scripts/cision_news.py <slug> --reports --pdf ./reports`
-
-```bash
-python cision_news.py --search "Sandvik"        # resolve the newsroom slug
-python cision_news.py sandvik --reports         # interim and annual reports
-python cision_news.py sandvik --reports --pdf . # save the PDFs
-```
-
-**One real difference from MFN.** Cision publishes no regulatory flag, and a
-newsroom mixes MAR disclosure with marketing PR — `/se/volvo` carries Volvo
-Trucks product releases next to financial reports. MFN's `:regulatory` tag has
-no equivalent, so the script's labels are keyword heuristics. Confirm before
-citing a Cision release as regulated information.
-
-The two sources are complementary rather than overlapping: ESEF reaches the
-regulated-market large caps, MFN reaches the small caps and growth markets where
-ESEF does not apply at all.
+**§2, the general MFN.se/Cision route to the latest quarter, is STANDARD/DEEP
+material (step 6 below) — see `references/sweden-deep.md`.** §2b continues the
+numbering because other files cite it by that name; it stands on its own.
 
 ### 2b. First North, Spotlight and NGM — no ESEF at all
 
@@ -73,10 +43,10 @@ These are MTFs, not regulated markets, so the ESEF mandate does not apply and
 companies anywhere. The MAR-regulated report release **is** the primary source.
 
 ```bash
-python mfn_news.py --search "KebNi"                        # resolve the slug
-python mfn_news.py kebni --reports --lang en --figures     # headline figures
-python mfn_news.py kebni --reports --lang en --text        # full release body
-python mfn_news.py kebni --reports --pdf ./reports         # save the PDFs
+python mfn_news.py --search "KebNi" --json                        # resolve the slug
+python mfn_news.py kebni --reports --lang en --figures --json     # headline figures
+python mfn_news.py kebni --reports --lang en --text --json        # full release body
+python mfn_news.py kebni --reports --pdf ./reports --json         # save the PDFs
 ```
 
 `--figures` extracts the headline numbers from the release body and **prints the
@@ -112,9 +82,15 @@ requirements, no ESEF, sparse or no analyst coverage, and wide spreads. A
 ### Insider activity — read the classification, not the total
 
 ```bash
-python insider_se.py --issuer "Volvo" --months 6
-python insider_se.py --issuer "Evolution AB" --months 12
+python insider_se.py --issuer "Volvo" --months 6 --json --summary
+python insider_se.py --issuer "Evolution AB" --months 12 --json --summary
 ```
+
+`--summary` drops the per-transaction rows from the JSON payload and keeps
+only the aggregate below (net direction, counts, totals, windows, source and
+as-of) — everything this section reads. Drop `--summary` when you need the
+individual PDMR/date rows instead, e.g. for the red-flag #17 thresholds
+("three or more PDMRs selling within a 30-day window").
 
 The register mixes decisions with mechanics. Option exercises, RSU allotments,
 sell-to-cover, internal transfers, pledges and rights-issue subscriptions all
@@ -143,9 +119,9 @@ Always check the price against the market price of the day.
 ### Short interest — run this on every Swedish bear case
 
 ```bash
-python short_se.py "Embracer"            # aggregate + named holders
-python short_se.py "Elekta" --history    # the trend, which matters more than the level
-python short_se.py --top 20              # most-shorted issuers
+python short_se.py "Embracer" --json            # aggregate + named holders
+python short_se.py "Elekta" --history --json    # the trend, which matters more than the level
+python short_se.py --top 20 --json              # most-shorted issuers
 ```
 
 A named professional filing a short position with the regulator is the
@@ -182,8 +158,8 @@ listed classes, and counting only the liquid one understates market cap and
 makes every multiple look cheap.
 
 ```bash
-python nordic_shares.py "Volvo"        # sums VOLV A + VOLV B
-python nordic_shares.py --universe STO # 743 listed lines across all segments
+python nordic_shares.py "Volvo" --json        # sums VOLV A + VOLV B
+python nordic_shares.py --universe STO --json # 743 listed lines across all segments
 ```
 
 Nasdaq Nordic's own reference data, keyless. Verified against issuers' statutory
@@ -217,83 +193,8 @@ not a theoretical case.
 The exchange note field also carries **Observation status**, which is a
 surveillance flag worth reporting. Evolution currently carries one.
 
-### 5. Ownership
-
-```bash
-python ownership_se.py --isin SE0012673267
-python ownership_se.py --name "Addtech"
-python ownership_se.py --quarters
-```
-
-Every Swedish UCITS fund files complete line-item holdings with FI quarterly.
-Reverse-indexed by ISIN this gives domestic institutional ownership: which funds
-hold the name, how many shares, and what share of each fund's NAV.
-
-Read three things beyond the list.
-
-**Concentration** — top-1/3/5/10 share of the disclosed base plus HHI. Sandvik
-is diffuse (top-5 = 27.1%, HHI 284); Evolution is concentrated (top-5 = 95.3%,
-HHI 5386). Those are different ownership situations with different behaviour
-under stress.
-
-**Conviction** — a fund with 4%+ of NAV in one company has done real work, and
-its view deserves engagement rather than dismissal.
-
-**Trend** — quarter-over-quarter against one and four quarters back: funds
-added, funds exited, and net share change. Draw conclusions from **share
-counts, not value**, because value moves with the price. The two horizons can
-disagree usefully: Sandvik is +1.5% over one quarter but −8.6% over four.
-
-Two data traps the script handles, both of which would otherwise fabricate
-turnover: a fund manager rebranding (Storebrand Fonder AB → Storebrand Asset
-Management AS invented 11 exits and 11 additions in Sandvik alone), and
-`Marknadsvärde_instrument` being denominated in the **fund's** reporting
-currency (SEK) rather than the instrument's quote currency.
-
-Swedish funds only. Foreign institutions, AP-fund direct holdings and private
-owners are outside the register, so treat it as a **floor** on institutional
-ownership. For the full picture add:
-
-- **The annual report's ownership table** (`Ägarförteckning`) — largest holders
-  with votes and capital, authoritative and annual.
-
-`holdings.se` (Modular Finance) has no public API and is login-gated, so it is
-not usable by this plugin — see `source-registry.md`. Interim ownership changes
-between the quarterly FI Fondinnehav files and the annual Ägarförteckning are
-`DATA NOT AVAILABLE`.
-
-`insider_se.py` gives insider *transactions*; ownership *percentage* comes from
-these. The management section needs both.
-
-### 6. Macro and rates
-
-**Riksbanken SWEA API** — free, official, no key. This is the Swedish
-equivalent of FRED and supplies the discount-rate inputs:
-
-```
-https://api.riksbank.se/swea/v1/Observations/<series>/<from>/<to>
-```
-
-| Series | Meaning |
-|---|---|
-| `SEGVB10YC` | 10-year Swedish government bond — the SEK risk-free rate for DCF |
-| `SECBREPOEFF` | Riksbank policy rate |
-| `SEKEURPMI` | SEK/EUR |
-| `SEKUSDPMI` | SEK/USD |
-
-Use `SEGVB10YC` for any SEK-denominated DCF. **Statistics Sweden (SCB)** at
-`api.scb.se` provides CPI, wages and industrial production, free.
-
-### 7. Other Swedish sources
-
-| Source | Use | Cost |
-|---|---|---|
-| **Börsdata** (borsdata.se) | Nordic fundamentals and ratios with an official API | Paid — deliberately excluded by design, see `source-registry.md` |
-| **allabolag.se / Bolagsverket** | Legal entity data, board, subsidiary annual accounts | Free / per-document fee |
-| **Nasdaq OMX Nordic** | Segment, share classes, index membership, turnover | Free |
-| **Avanza** | IR homepage pointer and share-count cross-check, fetched by `ir_discovery.py`; the next-report date, fetched by `horizon.py` | Unofficial |
-| **Nordnet** | Quotes, holder counts — not fetched by any script here; manual lookup only | Unofficial |
-| **DI, Affärsvärlden, Placera** | News and commentary | Secondary tier — context only |
+Institutional ownership (§5), macro/rates for DCF (§6) and secondary sources
+(§7) are STANDARD/DEEP material — see `references/sweden-deep.md`.
 
 ## Market segments
 
@@ -310,32 +211,8 @@ as realistic.
 
 ## Accounting basis: IFRS or K3
 
-The IAS Regulation binds **regulated-market** issuers (Large Cap, Mid Cap,
-Small Cap) to IFRS. It does not reach the MTFs: First North (outside Premier),
-Spotlight and NGM issuers may report consolidated accounts under Swedish GAAP
-**K3** instead, and many do. **First North Premier requires IFRS.**
-
-Check the accounting-principles note before anything else — it sits on the
-first page of the notes in every årsredovisning, so confirming the framework
-costs nothing. Under K3:
-
-- **Goodwill is amortised**, rather than impairment-tested. Swedish law
-  presumes a **five-year** useful life where it cannot be reliably established,
-  with ten years as the outer bound — read the actual period from the note
-  rather than assuming either figure. The "goodwill exceeding equity" trigger
-  and the impairment-test-note routine in `red-flags-general.md` flag 10
-  are written for IFRS and misfire on a K3 filer. K3 EBIT also carries an
-  amortisation charge an IFRS peer's does not — restate before comparing.
-- **There is no IFRS 16.** K3 chapter 20 requires **finance** leases to be
-  capitalised in the consolidated accounts; only **operating** leases stay off
-  balance sheet, and most K3 filers' lease exposure is operating. Do not add a
-  lease liability the filing does not carry. Capitalising rent for comparison
-  against an IFRS peer is an **analytical adjustment only** — done on the side,
-  for the comparison — never restated onto the company's reported balance
-  sheet.
-- The IFRS-specific red flags that cite IAS 38, IFRS 8 and goodwill
-  impairment (`red-flags-general.md` flags 9, 10 and 15) apply only in
-  their K3 form — each carries the caveat where it is stated.
+The K3 goodwill-amortisation, lease and red-flag-caveat rules (STANDARD/DEEP)
+are in `references/sweden-deep.md`'s "Accounting basis: IFRS or K3" section.
 
 ## Reporting conventions
 
@@ -425,14 +302,8 @@ Compute the leverage metrics yourself for comparability.
 
 ## Common tickers
 
-`VOLV-B.ST` · `INVE-B.ST` · `ATCO-A.ST` · `ERIC-B.ST` · `SAND.ST` · `EVO.ST` ·
-`HEXA-B.ST` · `ASSA-B.ST` · `SEB-A.ST` · `SHB-A.ST` · `ESSITY-B.ST` ·
-`EPI-A.ST` · `NIBE-B.ST` · `SWED-A.ST` · `HM-B.ST`
-
-MFN slugs are name-based and rarely match the ticker: `volvo`, `investor-ab`,
-`atlas-copco`, `evolution`, `sandvik`. Resolve with
-`scripts/mfn_news.py --search "NAME"` rather than guessing.
-
+A ticker cheat-sheet and MFN-slug resolution notes are in
+`references/sweden-deep.md`.
 
 ## The default run — step order
 
@@ -448,16 +319,16 @@ either produces a dated, sourced figure or a stated gap — never a silent one.
 | 3 | Locate the issuer's own IR site | `ir_discovery.py` |
 | 4 | Price with timestamp; shares outstanding across all classes | `quote.py`, `nordic_shares.py` |
 | 5 | Annual financials | `esef_fundamentals.py`, or the report PDF on an MTF |
-| 6 | Latest quarter and regulatory releases | `mfn_news.py` or `cision_news.py` |
+| 6 | Latest quarter and regulatory releases | `mfn_news.py` or `cision_news.py` — see `references/sweden-deep.md` §2 for the Cision gap |
 | 7 | Corporate actions and the dilution log | `corporate_actions.py` |
 | 8 | Insider activity, classified | `insider_se.py` |
 | 9 | Short interest and its trend | `short_se.py` |
-| 10 | Institutional ownership and its trend | `ownership_se.py` |
+| 10 | Institutional ownership and its trend | `ownership_se.py` — see `references/sweden-deep.md` §5 |
 | 11 | Financial targets and the delivery record | `guidance_track.py` |
 | 12 | Peer set | `peers_se.py` |
-| 13 | DCF inputs and industry benchmark | `macro_se.py` |
+| 13 | DCF inputs and industry benchmark | `macro_se.py` — see `references/sweden-deep.md` §6 |
 | 14 | Verification: restatements, ties, cross-checks | `verify_filing.py` |
-| 15 | Red-flag screen | `references/red-flags-general.md` (+ `references/red-flags-smallcap.md` for MTF/small-cap issuers) |
+| 15 | Red-flag screen | `references/red-flags-quick.md` + `references/red-flags-general.md` (+ `references/red-flags-smallcap.md` for MTF/small-cap issuers) |
 | 16 | Valuation, reverse DCF, scenarios, scorecard, recommendation | — |
 | 17 | Emit and validate the decision record; on a BUY or SELL, seed the thesis | `decision_record.py`, `thesis_ledger.py` |
 

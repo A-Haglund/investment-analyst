@@ -81,6 +81,19 @@ banners and column padding that carry no information the analysis uses.
 | `scripts/http_util.py` | One fetcher: retry with backoff on 429 and 5xx, and a collision-free cache key |
 | `scripts/_bootstrap.py` | The sibling-import idiom, written once and correctly |
 
+**Persistent state and `INVESTMENT_ANALYST_HOME`.** `portfolio_store.py`,
+`thesis_ledger.py`, `watchlist_store.py` and `guidance_track.py` all keep their
+state under `~/.investment-analyst/<store>` by default, resolved through
+`_bootstrap.state_home()`. Set `INVESTMENT_ANALYST_HOME` to move that whole
+tree — `~` and environment variables in the value are expanded. This matters
+for a scheduled or cloud job: each run starts in a fresh container, so an
+unset override means every run sees an empty thesis ledger, and the daily
+portfolio review's layer 2/3 then re-runs full analysis on every holding
+instead of a cheap HOLD. Point it at a mounted, persistent directory to avoid
+that. Each store's own per-store override (`PORTFOLIO_STORE_HOME`,
+`THESIS_LEDGER_HOME`, `WATCHLIST_STORE_HOME`, `GUIDANCE_STORE_HOME`) still
+takes priority when set, unchanged from before.
+
 Read the warnings the scripts print — they are not decoration. A currency
 warning, a stock-split warning, a truncation warning or a multi-tag warning each
 means a specific number in the table cannot be used the way it looks.

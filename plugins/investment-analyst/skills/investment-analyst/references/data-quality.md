@@ -116,36 +116,10 @@ something about its reporting quality that no ratio will.
 
 ## 5. Data confidence
 
-Scored out of 100, separately from the investment score. They measure different
-things: the investment score is about the company, data confidence is about how
-well we know it.
-
-| Component | Weight | What full marks looks like |
-|---|---|---|
-| Primary-source coverage | 30 | Every material figure from tier 1 |
-| Cross-verification | 25 | Revenue, EBIT, net income, equity and share count all `VERIFIED` |
-| Identity certainty | 10 | Legal entity, ISIN, LEI, orgnr, share classes and fiscal year all confirmed |
-| Completeness | 15 | No material metric is `DATA NOT AVAILABLE` |
-| Freshness | 10 | Latest report and a same-session price |
-| Conflicts | 10 | No unresolved `CONFLICT` |
-
-The table above is **how the score is computed, not how it is printed.** The
-printed form is the `EVIDENCE` block in `references/verification.md`: the score
-in its header, the grouped figures beneath it, and the `TALLY` line closing it.
-There is no second `DATA QUALITY` block — the component weights are working
-notes, and publishing both invites the two to drift apart.
-
-If a component is worth showing, show it in the tally. `Cross-verified figures
-7 of 9` belongs on the tally line; `Cross-verification weight 25` does not
-belong anywhere in the output.
-
-Rough calibration. A Swedish large cap with ESEF, an annual report and a live
-price lands roughly 70–95. Missing interim EBIT disclosure, untagged notes, or
-an ownership register that is only a floor can pull an otherwise well-covered
-large cap toward 60 — as the Sandvik exemplar used throughout this repo shows,
-at 61/100. A First North microcap with no ESEF, figures extracted from a
-release and no short or ownership data lands 35–55. If it lands below 40, say
-plainly that the evidence does not support a confident view.
+The score, its six component weights and the rule that the weights are working
+notes rather than output live in `references/conviction.md`. The ladder is keyed
+on this score and is read at every depth, so the two belong together; nothing
+here restates them.
 
 ## 6. Point in time
 

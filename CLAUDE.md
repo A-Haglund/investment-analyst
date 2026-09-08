@@ -19,7 +19,7 @@ interpreter is `python3` (`python` is not on PATH).
 
 ```bash
 # Tests — from plugins/investment-analyst/skills/investment-analyst/tests/
-python3 run_tests.py                    # offline suite: ~856 tests, ~10s
+python3 run_tests.py                    # offline suite: ~1060 tests, ~15s
 python3 run_tests.py --network          # also hit live free endpoints, ~2 min
 python3 run_tests.py -k share_class     # single test / subset by method-name substring
 python3 run_tests.py -v                 # per-test names
@@ -81,17 +81,35 @@ areas — it is also the calibration for the level of rigour expected here.
 - `commands/` — six slash commands: `analyze`, `quick`, `tldr`, `compare`,
   `screen`, `portfolio`. Each is thin: it sets depth, points at SKILL.md
   sections, and does not restate their content.
-- `skills/investment-analyst/SKILL.md` — the spine (~1250 lines): evidence
+- `skills/investment-analyst/SKILL.md` — the spine (~1100 lines): evidence
   tagging, source order, market routing, the six depths, the verdict block, the
   seven-section output contract, the decision-record contract, the 11 research
   phases, the Swedish default run.
-- `skills/investment-analyst/references/` — 13 files loaded *on demand*
+- `skills/investment-analyst/references/` — 20 files loaded *on demand*
   (progressive disclosure, to control context cost). `SKILL.md` §11 maps each
   file to its phase.
 
 Numbered sections are cross-referenced by number from commands and other
-references. **A value has exactly one home** — e.g. the conviction ladder and
-every cap live only in `references/data-quality.md` §7; `SKILL.md` states that a
+references. `SKILL.md` §11 is the one place a reference's **load
+condition** is declared, and `tests/test_instruction_layer.py` enforces that
+every reference has a row there, that every pointer resolves, that the
+conviction ladder is tabulated in one file only, and that a constant stated in
+prose equals the constant the code enforces. Those tests are the reason the
+Markdown can be refactored at all — before them, a moved rule or a renamed
+file broke a run with the whole Python suite still green.
+
+Each reference file also carries a **character budget** in that test. Splitting
+a monolith only pays while the parts stay small, so regrowth is a test failure
+rather than an invisible cost. Raising a budget is a deliberate act.
+
+Persistent state honours `INVESTMENT_ANALYST_HOME` (resolved once, in
+`_bootstrap.state_home()`), falling back to `~/.investment-analyst`. Scheduled
+runs in the cloud get a fresh container each time, so without the override the
+thesis ledger is always empty and a portfolio review re-analyses every holding
+from scratch — expensive and worse.
+
+**A value has exactly one home** — e.g. the conviction ladder and
+every cap live only in `references/conviction.md`; `SKILL.md` states that a
 cap exists and refuses to restate its value. Preserve that when editing: adding
 a second copy of a number is the failure mode the structure exists to prevent.
 

@@ -125,7 +125,7 @@ Rules for this skill:
    consolidated accounts under Swedish GAAP **K3**, which has no IFRS 16
    equivalent: operating leases stay off balance sheet and rent stays in
    operating expenses, and there is no lease liability to add to
-   `total_debt`. See `references/sweden.md`'s "Accounting basis: IFRS or K3"
+   `total_debt`. See `references/sweden-deep.md`'s "Accounting basis: IFRS or K3"
    section before applying any rule below.
 2. For an IFRS filer, state explicitly whether `total_debt` includes lease
    liabilities. Default to **including** them — they are contractual

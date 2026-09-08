@@ -1,54 +1,16 @@
-# Red flags — general screen
+# Red flags — general screen (sixteen of twenty flags)
 
-A mechanical screen run on every company at every depth, catching patterns that precede permanent loss of capital. The wording rule (§1) and the twenty flags (§2–§7) apply to all listed companies regardless of venue or size. Governance and external-signal flags are particularly load-bearing for smaller issuers.
+**Flags 2, 5, 17 and 18 — plus the wording rule and the reporting rules that
+govern both files — are in `red-flags-quick.md`, not here.** A STANDARD or
+DEEP run must load BOTH this file and `red-flags-quick.md` to have all twenty
+flags; a run that reads only this file and believes it has the full screen is
+running an incomplete screen. This file holds flags 1, 3, 4, 6-16, 19 and 20.
+Numbering is non-contiguous within this file by design — flags 2, 5, 17 and 18
+are not missing, they live in the other file. Governance and external-signal
+flags are particularly load-bearing for smaller issuers.
 
----
-
-# The wording rule — non-negotiable, read before anything else
-
-You are writing about named public companies and named individuals. You have
-access to filings and registers. You have **no access to intent**, and nothing
-in the free data can establish it.
-
-Every finding in Part 1 is published as:
-
-```
-RED FLAG — REQUIRES INVESTIGATION
-  Observation       DSO rose from 62 to 91 days across FY2023-FY2025 while
-                    revenue grew 4%
-  Source            ESEF FY2025, tags TradeAndOtherCurrentReceivables and
-                    Revenue; recomputed from the tagged values
-  Could mean        looser credit terms to hold volume; a mix shift toward
-                    slower-paying public-sector customers; one large late
-                    account; or revenue recognised ahead of collection
-  Would resolve it  the receivables ageing note in the annual report, and
-                    management's answer on the next call
-  Status            UNRESOLVED
-```
-
-Four parts, always: what you observed, where it is visible, the range of
-innocent and non-innocent explanations, and the specific document that would
-settle it.
-
-**Never written, in any language, under any framing:** fraud, fraudulent,
-cooking the books, misleading investors, manipulation, scam, lying, hiding,
-covering up. Not as a hedge ("appears to be"), not as a question ("is this
-fraud?"), not as a hypothetical the reader is invited to complete. A red flag is
-an observation that raises the cost of being wrong. It is not an allegation, and
-the analytical value is entirely in the observation.
-
-Two consequences that follow:
-
-- **A flag that resolves is reported as resolved.** If the ageing note shows one
-  large public-sector customer on 120-day terms, write `RESOLVED — receivables
-  ageing note, AR 2025 p.61` and move on. A screen that only ever accumulates
-  flags is not being run honestly.
-- **A flag is not a verdict.** Flags route into the devil's advocate section of
-  `bear-case-and-scoring.md`, and where quantifiable, into the bear scenario.
-  They do not sum to a recommendation. The one arithmetic rule: **three or more
-  unresolved flags from the cash-and-earnings-quality group (§2 below) cap
-  conviction at LOW**, because that combination means the reported profit and
-  the cash are telling different stories and you cannot say which is right.
+The wording rule that governs every flag in both files is in
+`red-flags-quick.md` — read it there before anything else in this file.
 
 ---
 
@@ -60,8 +22,8 @@ For a Swedish issuer, four commands cover roughly half the screen before you
 open a single PDF:
 
 ```bash
-python scripts/insider_se.py --issuer "NAME" --months 12   # flags 17
-python scripts/short_se.py "NAME" --history                # flag 18
+python scripts/insider_se.py --issuer "NAME" --months 12   # flag 17 (in red-flags-quick.md)
+python scripts/short_se.py "NAME" --history                # flag 18 (in red-flags-quick.md)
 python scripts/mfn_news.py <slug> --regulatory --limit 40   # flags 1, 16, 19
 python scripts/ownership_se.py --name "NAME"                # context for 11, 12
 ```
@@ -71,6 +33,8 @@ in §2 and §3. Everything left over is in the notes to the annual report, and
 §7 lists exactly which ones.
 
 ## §1 Capital structure and financing
+
+*(Flag 2 — High dilution — is in `red-flags-quick.md`.)*
 
 **1. Repeated equity raises.** Trigger: **two or more issues for cash inside 24
 months**, or **any** issue for cash within twelve months of management stating
@@ -83,16 +47,6 @@ not funding itself from operations, and each round resets the per-share
 arithmetic of every prior estimate. The pattern also tells you the terms
 available to the company, which is a harder fact about its prospects than
 anything in the CEO letter.
-
-**2. High dilution.** Trigger: **diluted share count up more than 5% in a year**
-with no matching acquisition or capital programme; **more than 15% in one year**
-is material at any size and for any reason. 5% is not arbitrary — it is roughly
-the whole equity risk premium of a mature business, so a shareholder diluted at
-that rate is left with roughly the **risk-free** return while still bearing
-full equity risk. Where: the diluted
-weighted-average share count on the face of the income statement, compared
-across filings, and `nordic_shares.py "NAME"` for the current registered count.
-Do not use the basic count and do not use a quote site.
 
 **3. Covenant pressure.** Trigger: **headroom below 20% on any disclosed
 covenant**; any waiver, reset or amendment in the last twelve months; or the
@@ -112,17 +66,11 @@ ratio is blind to timing.
 
 ## §2 Cash and earnings quality
 
+*(Flag 5 — Weak FCF conversion, also part of this group — is in
+`red-flags-quick.md`.)*
+
 This group is where the screen earns its keep. Three unresolved flags here cap
 conviction at LOW.
-
-**5. Weak FCF conversion.** Trigger: **FCF / net income below 60% averaged over
-three years**, or below 80% for a business that presents itself as asset-light.
-Three years, not one: a single year below 60% is usually working capital
-absorbed by growth and is not a finding. Where: computed from CFO and capex,
-both tagged in ESEF, so `esef_fundamentals.py` gives it directly. Follow the
-cumulative accrual gap procedure in `fundamentals.md` and name the
-balance-sheet line that absorbs the difference — a flag that cannot name the
-line is not yet a flag.
 
 **6. Persistently negative FCF.** Trigger: **negative FCF in three of the last
 five years** without an identified investment programme that has a stated end
@@ -137,7 +85,7 @@ exceeding revenue growth by more than 10 percentage points for two consecutive
 periods**, or **DSO up more than 15% across two years**. Two consecutive
 periods, because a single quarter's gap of that size is routinely produced by
 one large invoice landing either side of a period end. Where: DSO from
-`fundamentals.md`; the inputs are tagged. `output-contract.md` §4 shows the
+`fundamentals.md`; the inputs are tagged. SKILL.md §1's bound rule shows the
 register for reporting this well — a receivables build during a demand ramp is not
 automatically a flag, but it is always the line to watch if growth decelerates.
 
@@ -165,7 +113,7 @@ capitalisation policy; a policy change mid-series makes the trend meaningless
 and must be stated. **On a K3 filer** the citation is different but the
 discretion problem is the same one: K3 offers an accounting-policy choice
 between capitalising and expensing development costs outright, so read the
-accounting-principles note (`sweden.md`) to see which model applies before
+accounting-principles note (`sweden-deep.md`) to see which model applies before
 judging the trend.
 
 ## §3 Balance-sheet composition
@@ -188,7 +136,7 @@ is the same finding seen twice. **This flag and the impairment-test-note
 routine are written for IFRS goodwill (IAS 36).** A K3 filer amortises
 goodwill instead of testing it for impairment — Swedish law presumes a
 five-year useful life where it cannot be reliably established, with ten years
-as the outer bound (`sweden.md`) — so neither trigger applies as written; check
+as the outer bound (`sweden-deep.md`) — so neither trigger applies as written; check
 the actual amortisation period in the note, and add the amortisation charge
 back before comparing EBIT to an IFRS peer's.
 
@@ -202,10 +150,10 @@ small and cash flow is the binding constraint. Where: **Swedish and Nordic
 ESEF filers frequently do not tag SBC** — `esef_fundamentals.py` returns
 `DATA NOT AVAILABLE` and the figure lives in the annual report note on
 incentive programmes. A human must read it. Until then, report owner-adjusted
-FCF as an **upper bound** and say so, per `output-contract.md` §4's
-gap-as-bound rule. Pair this with flag 2: buybacks that leave the diluted count flat are
-funding compensation, not returning capital, and the analysis says that in those
-words.
+FCF as an **upper bound** and say so, per SKILL.md §1's bound rule and its
+gap-as-bound rule. Pair this with flag 2 (in `red-flags-quick.md`): buybacks
+that leave the diluted count flat are funding compensation, not returning
+capital, and the analysis says that in those words.
 
 ## §5 Governance and people
 
@@ -256,7 +204,7 @@ note and the segment note. Check whether the concentration is a *customer* or
 a *contract* — a framework agreement with a renewal date is a dated risk, and
 the date belongs in the invalidating-KPI table. **K3 carries no
 equivalent mandatory major-customer disclosure**, so a blank note on a K3
-filer (`sweden.md`) is a framework fact, not evidence of low concentration —
+filer (`sweden-deep.md`) is a framework fact, not evidence of low concentration —
 say so rather than marking the flag CLEAR.
 
 **16. Supplier concentration.** Trigger: **one supplier above 20% of COGS**, a
@@ -269,40 +217,8 @@ business and the one least visible in any ratio.
 
 ## §7 External signals
 
-**17. Unusual insider activity.** Trigger: **three or more PDMRs selling within
-a 30-day window**; **any PDMR sale in the 60 days before a profit warning or a
-materially weak report**; or a **CEO or CFO sale exceeding 25% of their
-disclosed holding**. Where: `insider_se.py --issuer "NAME" --months 12` for
-Sweden, which reads FI's Insynsregistret and covers Nasdaq Stockholm, First
-North, Spotlight and NGM from 2016-07-03; BaFin Directors' Dealings for
-Germany; AMF for France.
-
-**Read the price column before reading the direction.** Verified on KebNi
-2026-08-31: the register shows PDMR purchases at 0.14 and 0.19 SEK in periods
-when the shares traded above 1.00 SEK. Those are warrant subscriptions or
-incentive-programme exercises, not open-market conviction buys, and counting
-them as insider buying inverts the signal. The same applies in reverse to sales
-made to cover tax on a vesting. The script surfaces `BUY`, `SELL` and `OTHER`
-from the register's own transaction-type field — use it, and where the price
-sits far from the market price on that date, say what the transaction actually
-was. Insider selling on its own is weak evidence in either direction; people
-sell shares for reasons that have nothing to do with the company. The
-*clustering* and the *timing relative to disclosure* are the signal.
-
-**18. Rising short interest.** Trigger: **aggregate net short above 3%** is
-notable; **above 5%** means a funded professional bear case exists and the
-devil's advocate section must engage with it specifically; **a rise of more than
-1.5 percentage points in a quarter** matters more than the level. Where:
-`short_se.py "NAME"` and `short_se.py "NAME" --history` for the trend. Quote the
-aggregate, not the sum of named holders — `sweden.md` documents why the named
-list can understate the base by nearly half. **Absence is information and gets
-stated**: verified 2026-08-31, KebNi does not appear in FI's blankningsregister
-at all, meaning no holder has reported a position at or above the 0.1%
-notification threshold, so the issuer does not appear in FI's aggregate file —
-no professional has put capital behind the bear case. Note also what short
-interest is *not*: a small-cap short base is often a convertible or
-issue-related hedge rather than a directional view, and the register does not
-distinguish them.
+*(Flags 17 and 18 — Unusual insider activity, Rising short interest — are in
+`red-flags-quick.md`.)*
 
 **19. Repeated guidance cuts.** Trigger: **two consecutive cuts to the same
 fiscal-year target**, or **any cut within 90 days of reaffirming** the same
@@ -347,26 +263,10 @@ Where the note was not read, the correct entry is `DATA NOT AVAILABLE — annual
 report note not read`, and it reduces Completeness in the data-confidence score
 of `data-quality.md` §5. It is not a pass.
 
-## §9 Reporting the screen
+## §9 Reporting the screen — moved
 
-At QUICK depth, run flags 2, 5, 17 and 18 — the ones reachable from QUICK's own
-step list — and report the count of items not screened. Flags 1 and 19 both
-key off `mfn_news.py --regulatory`, which is step 6 of `SKILL.md`'s Swedish
-routing table and only enters at STANDARD depth, so they defer to STANDARD
-along with the rest. At STANDARD and DEEP, run all twenty.
-
-**Unresolved flags that are material to the recommendation surface in the answer**
-through the `Talar emot` list in section 4, or in the `Viktigast` closing line.
-Resolved flags confirm a benign explanation. A tally of unresolved, resolved,
-clear and not-available items is underlying material (printed when the reader
-requests it), together with the full flag-by-flag record.
-
-Where the red flag screen runs materially clean, that is worth stating in the
-answer rather than leaving silence to imply the usual concerns. A reader who sees
-no flags printed may reasonably wonder whether they were looked for.
-
-In the printed answer, do not dump the raw flag list. Instead, fold material
-findings into `Talar emot` with their own sourcing and reasoning, just as any
-other challenge to the thesis would appear there. Unresolved flags that do not
-crack the call live in `Viktigast`, which is where the reader should see the
-real limitations of this run.
+The QUICK/STANDARD/DEEP flag-routing rule and the reporting rules (how to
+report a finding, tally results, and fold them into the printed answer) are
+shared by both red-flag files and live in `red-flags-quick.md` under
+"Reporting the screen" — every depth reads them there. This file does not
+restate them.

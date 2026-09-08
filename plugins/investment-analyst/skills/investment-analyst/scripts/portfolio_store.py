@@ -37,7 +37,9 @@ STORAGE
     Written atomically (temp file + os.replace) so a crash mid-write never
     leaves a half-written portfolio on disk. Override the root with the
     PORTFOLIO_STORE_HOME environment variable (used by the test suite so it
-    never touches a real home directory).
+    never touches a real home directory), or with INVESTMENT_ANALYST_HOME
+    (shared by every store - see _bootstrap.state_home()) to move the whole
+    ~/.investment-analyst tree, e.g. for a scheduled/cloud run.
 
 SCHEMA  (see the module docstring's JSON example in the project spec)
     {
@@ -149,6 +151,10 @@ def _load_sibling(name):
 # that file does I/O), and every paste and every --cash figure needs it.
 mfn_news = _load_sibling("mfn_news")
 
+# _bootstrap.state_home() is the one shared home for every store's default
+# root; also pure and import-time-safe, so it is loaded eagerly too.
+_bootstrap = _load_sibling("_bootstrap")
+
 # company_resolve.py is NOT imported eagerly: importing it pulls in
 # nordic_shares, esef_fundamentals, mfn_news and cision_news in turn, and
 # --list / --cash / --remove never need identity resolution at all. Loaded
@@ -180,7 +186,7 @@ def store_home():
     override = os.environ.get("PORTFOLIO_STORE_HOME")
     if override:
         return os.path.abspath(override)
-    return os.path.join(os.path.expanduser("~"), ".investment-analyst", "portfolio")
+    return os.path.join(_bootstrap.state_home(), "portfolio")
 
 
 def _safe_name(name):

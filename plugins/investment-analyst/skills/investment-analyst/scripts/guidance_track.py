@@ -90,6 +90,7 @@ import mfn_news as MFN            # noqa: E402
 import cision_news as CIS         # noqa: E402
 import esef_fundamentals as ESEF  # noqa: E402
 import company_resolve as CR      # noqa: E402  -- LEI/ISIN identity, for the store only
+import _bootstrap                 # noqa: E402  -- state_home(), shared store root
 
 UA = "Mozilla/5.0 (compatible; investment-analyst-skill/1.0)"
 GUIDANCE_LABEL = "SINGLE SOURCE - MANAGEMENT GUIDANCE"
@@ -1898,11 +1899,12 @@ def guidance_store_home():
     """Root directory for the guidance store, overridable the same way
     portfolio_store.py (PORTFOLIO_STORE_HOME) and thesis_ledger.py
     (THESIS_LEDGER_HOME) already are - so the test suite never has to touch
-    a real ~/.investment-analyst."""
+    a real ~/.investment-analyst. INVESTMENT_ANALYST_HOME (shared by every
+    store - see _bootstrap.state_home()) moves the whole tree instead."""
     override = os.environ.get("GUIDANCE_STORE_HOME")
     if override:
         return os.path.abspath(override)
-    return os.path.join(os.path.expanduser("~"), ".investment-analyst", "guidance")
+    return os.path.join(_bootstrap.state_home(), "guidance")
 
 
 def _now_iso():

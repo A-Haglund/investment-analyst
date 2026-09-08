@@ -44,7 +44,9 @@ STORAGE
     Written atomically (temp file + os.replace), mirroring
     portfolio_store.py's own save(). Override the root with the
     WATCHLIST_STORE_HOME environment variable (used by the test suite so it
-    never touches a real home directory - mirrors PORTFOLIO_STORE_HOME).
+    never touches a real home directory - mirrors PORTFOLIO_STORE_HOME), or
+    with INVESTMENT_ANALYST_HOME (shared by every store - see
+    _bootstrap.state_home()) to move the whole ~/.investment-analyst tree.
 
 SCHEMA
     {
@@ -131,6 +133,10 @@ def _load_sibling(name):
 # needs it on essentially every --add.
 mfn_news = _load_sibling("mfn_news")
 
+# _bootstrap.state_home() is the one shared home for every store's default
+# root; also pure and import-time-safe, so it is loaded eagerly too.
+_bootstrap = _load_sibling("_bootstrap")
+
 # company_resolve.py is loaded lazily - --list/--remove/--touch never need
 # identity resolution, and importing it pulls in nordic_shares,
 # esef_fundamentals, mfn_news and cision_news in turn. Swappable in tests and
@@ -153,7 +159,7 @@ def store_home():
     override = os.environ.get("WATCHLIST_STORE_HOME")
     if override:
         return os.path.abspath(override)
-    return os.path.join(os.path.expanduser("~"), ".investment-analyst", "watchlist")
+    return os.path.join(_bootstrap.state_home(), "watchlist")
 
 
 def _safe_name(name):

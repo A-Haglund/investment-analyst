@@ -177,7 +177,7 @@ Rules:
 
 Regulated-market issuers in all of these markets report under **IFRS**. MTF
 issuers across the Nordics may report under national GAAP instead — Swedish
-K3 is the case this plugin documents in depth (`sweden.md`'s "Accounting
+K3 is the case this plugin documents in depth (`sweden-deep.md`'s "Accounting
 basis" section), but Euronext Growth Oslo and First North Denmark and Finland
 issuers commonly report under Norwegian, Danish or Finnish national GAAP as
 well. For a Norwegian, Danish or Finnish MTF issuer, read the
