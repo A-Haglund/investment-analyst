@@ -108,7 +108,7 @@ disclosure before using the number.
 ### 4. Price sanity
 
 Already automated in `quote.py`: two independent feeds, flagged if they diverge
-by more than 0.5%. Always print the as-of timestamp and the staleness note.
+by more than 2%. Always print the as-of timestamp and the staleness note.
 
 ### 5. Legal entity
 

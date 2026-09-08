@@ -107,7 +107,7 @@ operating lease obligations, and pension deficits. A company with 1.5x leverage
 and a wall of maturities next year is riskier than one at 2.5x termed out to 2032.
 
 Leverage and interest coverage as defined here do not apply to banks or
-insurers — see `references/valuation.md`'s "Financials and real estate"
+insurers — see `references/valuation-core.md`'s "Financials and real estate"
 section for the substitute framework.
 
 ### Leases — required before any cross-framework comparison
@@ -170,7 +170,7 @@ returning capital — it is funding compensation. Say that explicitly.
 
 Diluted share count above is for per-share and dilution metrics. Market cap
 and the outstanding share count that feeds it follow the canonical
-definition in `references/valuation.md` (outstanding, ex-treasury, per share
+definition in `references/valuation-core.md` (outstanding, ex-treasury, per share
 class at that class's own price) — do not substitute a diluted count for
 either.
 

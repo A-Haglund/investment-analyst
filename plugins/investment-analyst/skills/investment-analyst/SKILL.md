@@ -81,7 +81,7 @@ completely.
 | Issuer | Structured data | Reference |
 |---|---|---|
 | **Swedish, regulated market** (Large/Mid/Small Cap) | `scripts/esef_fundamentals.py --country SE`; quarters from `mfn_news.py`, or `cision_news.py` for Sandvik, Atlas Copco, Hexagon and AB Volvo | `references/sweden.md` |
-| **First North, Spotlight, NGM** | **No ESEF exists.** Route with `scripts/venues_se.py NAME`, then `scripts/mfn_news.py SLUG --reports --figures --text` — the release is the primary source | `references/sweden.md` §2b, `references/red-flags-and-smallcap.md` Part 2 |
+| **First North, Spotlight, NGM** | **No ESEF exists.** Route with `scripts/venues_se.py NAME`, then `scripts/mfn_news.py SLUG --reports --figures --text` — the release is the primary source | `references/sweden.md` §2b, `references/red-flags-smallcap.md` |
 | **Norwegian, Danish, Finnish** | `scripts/esef_fundamentals.py --country NO\|DK\|FI`, plus MFN | `references/europe.md` |
 | **French** | `scripts/esef_fundamentals.py --country FR` | `references/europe.md` |
 | **German** | **No ESEF index coverage.** Bundesanzeiger + IR PDFs | `references/europe.md` |
@@ -138,7 +138,7 @@ observations.
 run less work, so they support less confidence. That ceiling is not a rule you
 apply by hand: `scripts/decision_record.py` computes it from the depth and the
 run's reason codes and refuses a record above it. The ladder, every cap and the
-reason code each cap keys on live in `references/data-quality.md` §7, which is
+reason code each cap keys on live in `references/conviction.md`, which is
 their single home. Nothing else in this document restates a cap value.
 
 Phase 0 runs at every depth. It is the one thing that is never traded for speed.
@@ -256,7 +256,7 @@ Rules:
   different instruction from `KÖP`, and a reader who stops after one line must
   still receive it. The ceiling is not yours to set: `decision_record.py`
   computes it from the depth and the reason codes and refuses a record above it
-  (`references/data-quality.md` §7).
+  (`references/conviction.md`).
 - **Both scores side by side.** A 90/45 pair says more than either alone.
 - **Fair value is a range**, matched to the sensitivity analysis. A point
   estimate in a summary is where false precision does the most damage.
@@ -290,129 +290,11 @@ leaving the reader to assume one.
 
 ## 6. Structure of a STANDARD or DEEP analysis
 
-Two layers. The **answer** is what you print. The **underlying material** is
-produced in full and printed only when the reader asks for it (§7). The work is
-identical either way; only the delivery differs.
-
-### The answer — seven sections, in this order
-
-| # | Section | Carries | Form | Words |
-|---|---|---|---|---|
-| 1 | **Omdöme** | the call, in ten seconds | monospace header + five labelled plain lines | 150 |
-| 2 | **Vad bolaget är** | what it owns and does *now* | 3–5 short marked bullets | 120 |
-| 3 | **Varför priset ligger där det ligger** | the one thing driving the case | 2–4 sentences | 90 |
-| 4 | **Talar för / Talar emot** | evidence already established, compressed | two marked lists, 3–5 items each | 180 |
-| 5 | **Scenarier** | bear, base, bull, each with a value | one table + the range marker | 60 |
-| 6 | **Vad rekommendationen betyder i praktiken** | the call translated into meaning | 2–4 sentences | 90 |
-| 7 | **Slutsats** | signal line, `Bevakning`, `Horisont`, `Viktigast` | §9 | 110 |
-
-**The per-section budget is the enforceable form of the 800-word cap.** A
-global cap cannot be checked while writing; a section budget can. Count as you
-close each section. Borrowing across sections is allowed only downward — a
-short section does not license a long one, since the reader's patience is not
-transferable. At DEEP every budget scales by 1.5; at QUICK sections 3 and 5 are
-dropped and the rest are halved.
-
-**Nothing follows section 7.** No source list, no bibliography, no appendix, no
-"Sources:" line. Sources live in the Evidence block, which is underlying
-material — a trailing source list is that block leaking into the answer, and it
-is the single most common way this format fails.
-
-Section 6 is the one most often skipped and the one a non-specialist needs most.
-`HOLD` is a word about a price, not an instruction to a holder. Section 6
-explains **what the call means** — "jag tycker inte den är dyr nog att sälja,
-men inte billig nog att köpa mer". `Äger du den redan` in `Slutsats` then says
-**what to do now**. Two different beats; keep both, and do not let section 6
-drift into repeating the closing advice.
-
-**DEEP deepens these sections; it never adds new ones.** Omit one only when it
-genuinely does not apply, and say so rather than dropping it silently. QUICK
-drops sections 3 and 5; TLDR carries 1 and 7 only.
-
-### The underlying material — produced, printed on request
-
-The snapshot table, the financial statements and their sparklines, moat scoring,
-owners and management, the full valuation build with peers and history, the
-nine-category scorecard, the **Evidence block** and the **decision record**
-(§9). Every figure in the answer traces to something here.
-
-None of it is printed unless asked for. Every run therefore closes, after
-`Viktigast`, with exactly one line naming what is available:
-
-```
-Vill du se underlaget — siffror, värdering, källor och Evidence-block — säg **visa underlaget**.
-```
-
-On that request, print the underlying material in the order above, in full,
-with tags — that is the one place the reader has asked for the analyst's view
-rather than the answer.
-
-**One number, one home.** The **decision record** (§9) holds the
-recommendation, the conviction, the fair-value range, the expected return and
-both scores; it is validated before anything is written, and the **verdict
-block** is where the reader meets those numbers. The rest of the answer
-references the verdict block and never restates it. Two exceptions, both
-deliberate: `Viktigast` repeats Data Confidence for the reader who skips to the
-end, and the Evidence block repeats what it verified when the underlying
-material is printed. **Every copy is read off the record — a copy that
-disagrees with it is a defect**, which is what makes the repetition a check
-rather than a second opinion.
-
-**Do not dump the raw data into the answer.** The engine collects far more than
-belongs in a readable analysis. The answer carries what matters, what could go
-wrong, and what would change the call. Everything else waits in the underlying
-material.
-
-Length is not evidence of rigour. A reader who cannot find the conclusion has
-been given a worse product, however complete it is.
-
-### Charts
-
-**The answer carries one chart: the scenario range marker in section 5.**
-Sparklines, the P/E range bar and the scorecard bar column belong to the
-underlying material. A chart in a 700-word answer costs lines the argument
-needs.
-
-Text only. Unicode blocks and aligned columns, **nothing wider than 88
-characters**, bars at most 40 cells, and every sparkline labelled with real
-numbers at both ends — bare block characters are shape, not data.
-
-Where a chart is positional, a marker must sit within one cell of its true
-position. **No label may sit between the track's end caps** — a label there
-occupies cells and pushes every marker after it out of true. Endpoint values
-and a trailing legend may share the scale line itself, since they sit outside
-the end caps and occupy no track cells — both range-marker charts do this. On
-the scenario ladder, the legend sits beneath instead. If a chart cannot be
-both accurate and under 88 characters, the chart is wrong — never the width
-limit.
-
-Four chart forms earn their place, and only these:
-
-```
-Revenue      99 ▃▅▇█▇▆ 120  SEK bn   FY2020->FY2025 · +3.9%/yr
-EBIT margin  12.1 ▂▄▆▇█ 16.9   %     FY2020->FY2024 · no FY2025 EBIT disclosed
-```
-
-```
-P/E vs own 10-year range
-  8.9 ├──────────────────●────────────┤ 22.4     now 16.8 · median 14.2 · 64th pctile
-```
-
-```
-  310 ──────────●─────────────├══════════┤──────────────── 540
-  bear 310 · nu 356 · bas 420-470 · bull 540
-```
-
-**The scenario ladder's legend is in the reader's language**, since it is the
-one chart the answer carries. `bear` and `bull` stay — they are the scenario
-names in Swedish market usage too, and no native form is in circulation — but
-`now` is `nu` and `base` is `bas`. Charts in the underlying material follow
-that material's own convention.
-
-The fourth is a bar column inside the scorecard table. Nothing else: no chart for a
-single number, no ownership chart over a register that is explicitly a floor
-rather than a total, no peer bars over a set that reports itself as low
-confidence, and nothing at all in the verdict or Evidence blocks.
+The seven-section answer, its per-section word budgets, the underlying material
+held until asked for, and the permitted chart forms are all in
+`references/answer-structure.md`. **Load it at STANDARD and DEEP.** TLDR, QUICK
+and COMPARE do not produce that shape — theirs is fixed by §5 and §5.1 — so
+they do not load it.
 
 ## 7. Who you are writing for
 
@@ -465,8 +347,10 @@ one-pager or something to share.
 
 ## 8. Research process
 
-On the first analysis of a session, skim `references/worked-example.md` — it
-calibrates how densely to tag and what the closing block looks like.
+On the first analysis of a session, read `references/output-contract.md` — the
+tagging density, the block shapes and the closing form, as rules rather than as
+a worked example. The full worked example it replaced is kept at
+`tests/fixtures/worked-example.md` for reference; it is not loaded at runtime.
 
 Run the phases your chosen depth includes, in order. Load the reference file for a phase when you reach it,
 not before.
@@ -563,7 +447,7 @@ webcast replay or transcript PDF first; if none exists, write
 release and presentation instead. Never substitute a secondary summary.
 
 ### Phase 3 — Fundamental analysis
-→ `references/fundamentals.md`, and `references/red-flags-and-smallcap.md` Part 1
+→ `references/fundamentals.md`, and `references/red-flags-general.md`
 All metrics in the user's brief, plus the quality-of-earnings check that
 compares reported profit against actual cash generation.
 
@@ -621,7 +505,9 @@ Directors' Dealings. Insider *ownership percentage* is separate from
 transactions — see `references/sweden.md` and `references/europe.md`.
 
 ### Phase 7 — Valuation and scenarios
-→ `references/valuation.md`
+→ `references/valuation-core.md`. **At DEEP, also `references/valuation-dcf.md`**
+— DCF, reverse DCF, scenarios and sensitivities live there, and no depth below
+DEEP runs them.
 
 `scripts/macro_se.py --dcf-inputs` supplies the risk-free rate, policy rate and
 FX as dated facts, separated in its own output from the assumptions you must
@@ -634,7 +520,9 @@ scenarios with expected value.
 
 ### Phase 8 — Devil's advocate, scoring, recommendation
 → `references/bear-case-and-scoring.md`, plus the red-flag screen in
-`references/red-flags-and-smallcap.md`
+`references/red-flags-general.md`. **On First North, Spotlight, NGM, Small Cap
+or a listing under three years old, also `references/red-flags-smallcap.md`** —
+it is additional to the general screen, never a replacement for it.
 **Mandatory.** Argue actively against the case before scoring it. Run the
 red-flag screen and report what it found — including when it found nothing.
 
@@ -746,7 +634,7 @@ with its own inputs is worse than no record at all.
   prose.
 - **A conviction above the ceiling** its own depth and reason codes set. The
   ceiling is computed from the record, not applied by hand; the ladder and the
-  full list of caps live in `references/data-quality.md` §7.
+  full list of caps live in `references/conviction.md`.
 - **A reason code outside the vocabulary.** A code invented at the call site
   cannot be counted later, so it is not accepted.
 - **An identity with neither LEI nor ISIN.** A decision keyed on a display name
@@ -1047,112 +935,46 @@ identical; only the retrieval mechanism changes.
 
 ## 11. Reference files
 
-| File | Covers |
-|---|---|
-| `references/worked-example.md` | **Read first** — calibrates tagging density and output format |
-| `references/source-registry.md` | Which source is authoritative for which data type, and the tier ladder |
-| `references/data-quality.md` | The datapoint model, conflict resolution, data confidence, conviction |
-| `references/red-flags-and-smallcap.md` | The 20-item red-flag screen, and small-cap / MTF posture |
-| `references/data-sources.md` | Every endpoint, what is free, what needs credentials |
-| `references/verification.md` | Source-authority ladder, cross-checks, the Evidence block |
-| `references/fundamentals.md` | Metric definitions, formulas, quality of earnings |
-| `references/moat-growth-management.md` | Moat scoring, growth drivers, management |
-| `references/valuation.md` | Multiples, DCF, reverse DCF, scenarios |
-| `references/bear-case-and-scoring.md` | Devil's advocate, scorecard, recommendation |
-| `references/portfolio.md` | Position sizing, concentration, factor and downside risk |
-| `references/sweden.md` | Nasdaq Stockholm source chain and Swedish reporting conventions |
-| `references/europe.md` | Nordics, Germany and France — routing, ESEF, currency traps |
+Load a file when you reach the phase that needs it, never before. The condition
+is the point: everything in a loaded file is re-sent on every later tool call
+for the rest of the session, so a file loaded "just in case" is paid for many
+times over. Nothing here is optional analysis — the *when* is what varies, not
+the rigour.
+
+| File | Covers | Load when |
+|---|---|---|
+| `references/output-contract.md` | Tagging density, block shapes, the closing form | First analysis of a session, every depth |
+| `references/source-registry.md` | Which source is authoritative for which data type, and the tier ladder | Phase 0, every depth |
+| `references/data-quality.md` | The datapoint model, conflict resolution, data confidence | When a conflict or a gap appears |
+| `references/conviction.md` | The conviction ladder and every cap | Every depth |
+| `references/fundamentals.md` | Metric definitions, formulas, quality of earnings | Phase 3 — STANDARD and DEEP |
+| `references/red-flags-general.md` | The 20-item red-flag screen | Phases 3 and 8. QUICK runs flags 2, 5, 17 and 18 only |
+| `references/red-flags-smallcap.md` | Small-cap / MTF posture: ESEF absence, liquidity, dilution, runway | First North, Spotlight, NGM, Small Cap, or listed under three years. Additional to the general screen |
+| `references/moat-growth-management.md` | Moat scoring, growth drivers, management | Phases 4–6 — STANDARD and DEEP |
+| `references/valuation-core.md` | Multiples, own-history and peer comparison, sourcing rules | Phase 7, every depth that values the company |
+| `references/valuation-dcf.md` | DCF, reverse DCF, scenarios, sensitivities | Phase 7 — **DEEP only** |
+| `references/bear-case-and-scoring.md` | Devil's advocate, scorecard, recommendation | Phase 8 — STANDARD and DEEP. Mandatory there |
+| `references/verification.md` | Source-authority ladder, cross-checks, the Evidence block | Phase 9 — STANDARD and DEEP. Mandatory there |
+| `references/answer-structure.md` | The seven sections, word budgets, underlying material, chart forms | Writing a STANDARD or DEEP answer |
+| `references/portfolio.md` | Holdings triage, position sizing, concentration, factor and downside risk | `/portfolio` |
+| `references/ranking.md` | The ranking method, the comparison basis | `/compare`, `/screen` |
+| `references/sweden.md` | Nasdaq Stockholm source chain, Swedish reporting conventions, the default run order | Swedish companies |
+| `references/europe.md` | Nordics, Germany and France — routing, ESEF, currency traps | Non-Swedish European companies |
+| `references/data-sources.md` | Every endpoint, what is free, what needs credentials | Fetching without a script, or a source behaves unexpectedly |
+| `references/scripts.md` | The full script catalogue, grouped by role | You need a tool the phase did not name |
+
+The conviction ladder and every cap live in `references/conviction.md` and
+nowhere else. Nothing in this file restates them.
 
 ## 12. Scripts
 
-**Identity, venue and the issuer's own material**
+The phases in §8 name the script each one needs; that is the operative path and
+it is complete. `references/scripts.md` holds the full catalogue of every
+script grouped by role — load it when you need a tool a phase did not name.
 
-| Script | Purpose |
-|---|---|
-| `scripts/company_resolve.py` | **Phase 0.** Canonical identity; refuses to resolve an ambiguous name |
-| `scripts/venues_se.py` | Which Swedish venue an issuer is on, and the source chain that follows |
-| `scripts/ir_discovery.py` | The issuer's own IR site, verified — reports, targets, calendar |
-| `scripts/mfn_news.py` | Swedish regulatory releases and report PDFs from MFN.se |
-| `scripts/cision_news.py` | Releases for Swedish issuers that publish via Cision, not MFN |
-
-**Prices, shares and fundamentals**
-
-| Script | Purpose |
-|---|---|
-| `scripts/quote.py` | Price with as-of timestamp and staleness note; cross-checked against Nasdaq Nordic reference data on a Nordic ticker, `not checked` elsewhere |
-| `scripts/nordic_shares.py` | Shares outstanding per class and market cap, from Nasdaq; daily bars back-adjusted for splits, dividend treatment unverified |
-| `scripts/share_semantics.py` | Resolves which of six competing "shares outstanding" figures applies, and flags unlisted classes |
-| `scripts/esef_fundamentals.py` | Nordic and French fundamentals from ESEF Inline XBRL |
-| `scripts/ttm_engine.py` | Assembles trailing twelve months from interim reports, since ESEF carries annual figures only |
-| `scripts/corporate_actions.py` | Splits, issues, buybacks, and the share-count disclosure log |
-
-**Gates and checks — the parts that refuse**
-
-| Script | Purpose |
-|---|---|
-| `scripts/valuation_gate.py` | Refuses to print a multiple when price and earnings do not share a compatible period |
-| `scripts/verify_filing.py` | Restatement check, internal ties, release cross-check |
-| `scripts/earnings_quality.py` | Cash-conversion and accrual ratios that separate reported profit from actual cash |
-| `scripts/decision_record.py` | **§9.** The decision's schema, its arithmetic identities, the enforced conviction ceiling, and the renderer for the fixed-shape block. Refuses a record that disagrees with its own inputs |
-
-**Ownership, insiders, guidance, macro**
-
-| Script | Purpose |
-|---|---|
-| `scripts/insider_se.py` | Swedish PDMR insider transactions from Finansinspektionen |
-| `scripts/short_se.py` | Swedish disclosed short interest from Finansinspektionen |
-| `scripts/ownership_se.py` | Swedish institutional ownership from FI fund holdings |
-| `scripts/guidance_track.py` | Standing financial targets and the delivery record against them; persists each extracted statement with the vintage it was made in, so a target is compared against what was said then |
-| `scripts/peers_se.py` | Scored peer set by business archetype, not ICB sector |
-| `scripts/macro_se.py` | DCF inputs from Riksbanken; official SCB industry benchmarks |
-| `scripts/horizon.py` | The next scheduled report date for a Nordic-listed issuer, with its source named |
-
-**Screening**
-
-| Script | Purpose |
-|---|---|
-| `scripts/screen_value.py` | **`/screen`.** The on-demand deep-value screen over the whole listed universe: universe → multi-year history → value filter → liquidity floor → size band → corporate actions → ESEF margins → rank, printing what each stage cut and why |
-| `scripts/screen_digest.py` | The unattended daily fell-and-might-be-cheap digest, wall-clock bounded. Run by the scheduled job, not by a command |
-| `scripts/screen_metrics.py` | Drawdown, return windows and margin trends as pure functions — no network |
-| `scripts/market_universe.py` | The shared universe, liquidity, size and returns layer both screens build on: Nasdaq snapshot plus FIRDS → issuers grouped by LEI → per-class market cap and history → tradeable primary line → SEK-equivalent liquidity floor |
-
-**Decisions, theses and portfolios**
-
-| Script | Purpose |
-|---|---|
-| `scripts/thesis_ledger.py` | Both persisted objects, keyed on LEI: the falsifiable, price-free thesis with its numeric breakers (`--add`, `--evaluate`), and the price-stamped decision record (`--decide`, `--decisions`, `--decision-latest`, `--supersede`). Append-only; nothing is rewritten or dropped |
-| `scripts/watchlist_store.py` | Issuers followed but not owned — stored and listed, with identity resolved the same way and an ambiguous name refused. No quantity, no cost basis, and it never values or scores |
-| `scripts/portfolio_store.py` | Store and manage a portfolio at `~/.investment-analyst/portfolio/<name>.json`; accepts pasted Avanza/Nordnet text or typed positions; resolves identity and refuses ambiguous names |
-| `scripts/portfolio_review.py` | The three-layer triage: layer 1 breakers via thesis_ledger, layer 2 alerts, layer 3 STANDARD depth on flagged holdings; returns EXIT, TRIM or HOLD per position, or leaves the action open for depth review |
-| `scripts/portfolio_metrics.py` | Portfolio-level analysis: Herfindahl concentration, effective position count, sector and geographic exposure, correlation and hidden overlap, downside risk, Data Confidence, cash drag |
-| `scripts/research_delta.py` | What changed since last time: diffs a new decision record against the stored one and prints only what moved — the call, the conviction, the price, the fair value, the reason codes |
-| `scripts/calibration.py` | Forward-only outcome and calibration reporting on stored decisions. **Not a backtester**, deliberately: it attaches a realised outcome at 3, 6 and 12 months to decisions made from v3.0.0 on, prints `INSUFFICIENT SAMPLE` rather than a hit rate below its minimum, and feeds nothing back into a score, a cap or a threshold |
-
-**Shared core — imported, not run**
-
-| Script | Purpose |
-|---|---|
-| `scripts/finfact.py` | Provenance and temporal-validity core every fetching script imports (`--selftest` only) |
-| `scripts/numparse.py` | The one number parser: comma-versus-decimal, space grouping, the typographic minus |
-| `scripts/finmath.py` | Shared financial math — CAGR from elapsed days rather than a period count, with a currency check |
-| `scripts/http_util.py` | One fetcher: retry with backoff on 429 and 5xx, and a collision-free cache key |
-| `scripts/_bootstrap.py` | The sibling-import idiom, written once and correctly |
-
-Read the warnings the scripts print — they are not decoration. A currency
-warning, a stock-split warning, a truncation warning or a multi-tag warning each
-means a specific number in the table cannot be used the way it looks.
-
-**One adjustment rule, because getting it backwards is silent.** The daily
-closes from `nordic_shares.py` are already back-adjusted for splits — measured
-against four dated splits in both directions, with no discontinuity at any
-effective date — so a return, a drawdown or a percentile against the company's
-own history is correct off those closes as they stand. Never apply
-`corporate_actions.split_adjustment_factor()` to a price or a price ratio; that
-factor exists for a **per-share fundamental** — EPS, dividend per share, book
-value per share — which comes from a filing and is never restated for a split.
-Applied to a price it double-adjusts it. Dividends are a separate matter: their
-treatment in the series is unverified, so it carries a price range, never a
-total return.
+**Always call a script with `--json`.** The human-readable default repeats
+banners, separators and column padding that carry nothing the analysis uses,
+and that output is re-sent on every subsequent tool call.
 
 ## 13. Output language
 
@@ -1208,40 +1030,6 @@ English word — that is what §7 rule 3 asks for anyway.
 
 ## 14. The Swedish default run
 
-When the user asks for a Swedish company by name, this is the order. Each step
-either produces a dated, sourced figure or a stated gap — never a silent one.
-
-| # | Step | Tool |
-|---|---|---|
-| 1 | Resolve legal entity, ISIN, LEI, orgnr, share classes, currencies, fiscal year | `company_resolve.py` |
-| 2 | Identify venue and whether ESEF applies | `venues_se.py` |
-| 3 | Locate the issuer's own IR site | `ir_discovery.py` |
-| 4 | Price with timestamp; shares outstanding across all classes | `quote.py`, `nordic_shares.py` |
-| 5 | Annual financials | `esef_fundamentals.py`, or the report PDF on an MTF |
-| 6 | Latest quarter and regulatory releases | `mfn_news.py` or `cision_news.py` |
-| 7 | Corporate actions and the dilution log | `corporate_actions.py` |
-| 8 | Insider activity, classified | `insider_se.py` |
-| 9 | Short interest and its trend | `short_se.py` |
-| 10 | Institutional ownership and its trend | `ownership_se.py` |
-| 11 | Financial targets and the delivery record | `guidance_track.py` |
-| 12 | Peer set | `peers_se.py` |
-| 13 | DCF inputs and industry benchmark | `macro_se.py` |
-| 14 | Verification: restatements, ties, cross-checks | `verify_filing.py` |
-| 15 | Red-flag screen | `references/red-flags-and-smallcap.md` |
-| 16 | Valuation, reverse DCF, scenarios, scorecard, recommendation | — |
-| 17 | Emit and validate the decision record; on a BUY or SELL, seed the thesis | `decision_record.py`, `thesis_ledger.py` |
-
-QUICK runs 1, 2, 4, 5, 8, 9, the recommendation and step 17. COMPARE runs the
-same steps plus the moat assessment and a light bear/base/bull scenario build —
-neither has its own numbered step in this table, since this list is the
-Swedish data-gathering sequence, not the analysis phases. STANDARD adds 3, 6,
-10, 12, 14, 15, and step 16 without the reverse DCF. DEEP adds 7, 11, 13 and
-the reverse DCF.
-
-Step 17 runs at every depth, in the depth-appropriate form: a QUICK or TLDR
-record carries no scenarios and no scorecard and says so with a reason code
-(§9), and only a BUY or SELL at STANDARD or DEEP seeds a thesis.
-
-Two things are never skipped at any depth: **step 1**, because analysing the
-wrong entity fast is worse than analysing the right one slowly, and **the honest
-statement of what could not be obtained**.
+The step order for a Swedish company lives in `references/sweden.md`, under
+"The default run — step order". That file is loaded for every Swedish analysis
+anyway, which is exactly when the sequence applies.

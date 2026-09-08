@@ -92,7 +92,7 @@ class EsefDoesNotApplyOnAnMtf(unittest.TestCase):
 
 class NoScriptFabricatesConsensus(unittest.TestCase):
     """No free source in this toolkit provides real analyst consensus (see
-    references/valuation.md and references/source-registry.md: consensus is
+    references/valuation-core.md and references/source-registry.md: consensus is
     to be reported as DATA NOT AVAILABLE, never approximated).
 
     This was originally a bare trip-wire: NO script could contain the word.

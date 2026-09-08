@@ -1,5 +1,10 @@
 # Portfolio and risk analysis
 
+Covers holdings triage, sizing, concentration, exposure and downside risk for
+a portfolio you already hold. Loaded by `/portfolio`; the ranking method for
+comparing candidates against each other lives in `references/ranking.md`
+instead (loaded by `/compare` and `/screen`).
+
 Used when the user supplies holdings, reviews what they own, or asks which of
 several names is most attractive. Ask for the data you need rather than
 assuming: ticker, share count or weight, and average cost if position-level
@@ -43,7 +48,7 @@ STANDARD depth (`SKILL.md` §4) on holdings flagged by layer 1 or 2. A clean
 holding gets `BEHÅLL — nothing has changed` **with the date it was last
 reviewed**. That date is what makes the answer honest rather than a skipped
 step. Conviction for holdings not taken to depth is capped at **MEDIUM**, and
-where a breaker has fired at **LOW** — see `references/data-quality.md` §7 for
+where a breaker has fired at **LOW** — see `references/conviction.md` for
 the enforced ceiling.
 
 The three-layer approach means the cost scales with what changed rather than
@@ -298,34 +303,9 @@ Report:
 
 ## Comparative ranking — "which is most attractive right now?"
 
-Rank only companies analysed to the same depth on the same model. Mixing a
-thorough analysis with a superficial one produces a ranking that reflects effort,
-not opportunity.
-
-Rank primarily on **expected return per unit of downside**:
-
-```
-R/R = expected_return / |downside|
-```
-
-Then present a table:
-
-| Ticker | Price | Base FV | Upside | Downside | R/R | Score /100 | Conviction | Call |
-|---|---|---|---|---|---|---|---|---|
-
-Adjust the ranking for:
-- **Conviction** — a lower expected return with high conviction often beats the
-  reverse
-- **Portfolio fit** — the best standalone idea may be the worst addition if it
-  doubles an existing exposure
-- **Catalyst timing** — value that takes five years to realise is worth less than
-  the same value in one
-
-State the recommendation as: **the most attractive name, why, and what would
-have to be true for the runner-up to overtake it.**
-
-Never rank on Investment Score alone. The score measures the company; the
-opportunity is the gap between price and value.
+The ranking method and comparison basis for ordering several companies against
+each other now live in `references/ranking.md`, loaded by `/compare` and
+`/screen`.
 
 ## What this analysis does not do
 

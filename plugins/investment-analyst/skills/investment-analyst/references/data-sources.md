@@ -190,7 +190,7 @@ The `shares` field is the registered count including treasury, not shares
 outstanding — see `references/sweden.md` for the treasury correction. The
 endpoint's `marketCap` is registered shares times price with no treasury
 deduction and no allowance for an unlisted class: never use it. Compute
-market cap per `references/valuation.md` instead.
+market cap per `references/valuation-core.md` instead.
 
 The old `nasdaqomxnordic.com` DataFeedProxy is retired; every path redirects.
 
@@ -331,7 +331,7 @@ Riksbanken itself republishes, for a spread read on the same convention.
 
 ### ECB — the EUR risk-free rate
 
-`references/valuation.md` requires a 10-year yield in the cash flows' own
+`references/valuation-dcf.md` requires a 10-year yield in the cash flows' own
 currency. The SEK leg is Riksbanken, above. The EUR leg is **scripted and
 working**: `scripts/macro_se.py --euro` reads the ECB Data Portal
 (`data-api.ecb.europa.eu/service/data`, dataflow `YC`, key
@@ -339,7 +339,7 @@ working**: `scripts/macro_se.py --euro` reads the ECB Data Portal
 varies by tenor, `SR_3M` through `SR_30Y`). This is the **AAA-rated
 euro-area sovereign spot curve** — a Bund proxy, not a blend of every euro
 member. For a French issuer this is **not** the OAT that
-`references/valuation.md` calls "the relevant sovereign": France is not in
+`references/valuation-dcf.md` calls "the relevant sovereign": France is not in
 the AAA sub-sample the ECB curve is built from, so the ECB figure there is a
 proxy and the OAT itself would need its own (currently unverified) fetch.
 
@@ -407,7 +407,7 @@ the transcript-derived point. Do not substitute a third-party summary of a call.
 ## Consensus estimates
 
 Not obtainable without a licensed source. See the sourcing rule in
-`references/valuation.md`: use your own base-case estimate labelled
+`references/valuation-core.md`: use your own base-case estimate labelled
 `ASSUMPTION`, or company guidance labelled `ESTIMATE`, and substitute the
 reverse DCF when the question is what the market expects. Never present either
 as consensus.

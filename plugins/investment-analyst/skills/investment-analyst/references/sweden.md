@@ -202,7 +202,7 @@ registered total, but treasury holdings must be subtracted before computing
 market cap, EV or any per-share figure. The company holds them against itself;
 they carry no external claim and are not outstanding. Get the treasury count
 from the issuer's own "Total number of shares and votes" disclosure, or the
-equity note, not from the exchange feed (see `valuation.md` for the full
+equity note, not from the exchange feed (see `valuation-core.md` for the full
 market-cap definition).
 
 The size of the error is not trivial. Take 1,000m registered shares of which
@@ -323,7 +323,7 @@ costs nothing. Under K3:
   presumes a **five-year** useful life where it cannot be reliably established,
   with ten years as the outer bound — read the actual period from the note
   rather than assuming either figure. The "goodwill exceeding equity" trigger
-  and the impairment-test-note routine in `red-flags-and-smallcap.md` flag 10
+  and the impairment-test-note routine in `red-flags-general.md` flag 10
   are written for IFRS and misfire on a K3 filer. K3 EBIT also carries an
   amortisation charge an IFRS peer's does not — restate before comparing.
 - **There is no IFRS 16.** K3 chapter 20 requires **finance** leases to be
@@ -334,7 +334,7 @@ costs nothing. Under K3:
   for the comparison — never restated onto the company's reported balance
   sheet.
 - The IFRS-specific red flags that cite IAS 38, IFRS 8 and goodwill
-  impairment (`red-flags-and-smallcap.md` flags 9, 10 and 15) apply only in
+  impairment (`red-flags-general.md` flags 9, 10 and 15) apply only in
   their K3 form — each carries the caveat where it is stated.
 
 ## Reporting conventions
@@ -432,3 +432,46 @@ Compute the leverage metrics yourself for comparability.
 MFN slugs are name-based and rarely match the ticker: `volvo`, `investor-ab`,
 `atlas-copco`, `evolution`, `sandvik`. Resolve with
 `scripts/mfn_news.py --search "NAME"` rather than guessing.
+
+
+## The default run — step order
+
+*Moved here from SKILL.md §14: it is Swedish-specific routing, and this file is already loaded for exactly the runs that need it.*
+
+When the user asks for a Swedish company by name, this is the order. Each step
+either produces a dated, sourced figure or a stated gap — never a silent one.
+
+| # | Step | Tool |
+|---|---|---|
+| 1 | Resolve legal entity, ISIN, LEI, orgnr, share classes, currencies, fiscal year | `company_resolve.py` |
+| 2 | Identify venue and whether ESEF applies | `venues_se.py` |
+| 3 | Locate the issuer's own IR site | `ir_discovery.py` |
+| 4 | Price with timestamp; shares outstanding across all classes | `quote.py`, `nordic_shares.py` |
+| 5 | Annual financials | `esef_fundamentals.py`, or the report PDF on an MTF |
+| 6 | Latest quarter and regulatory releases | `mfn_news.py` or `cision_news.py` |
+| 7 | Corporate actions and the dilution log | `corporate_actions.py` |
+| 8 | Insider activity, classified | `insider_se.py` |
+| 9 | Short interest and its trend | `short_se.py` |
+| 10 | Institutional ownership and its trend | `ownership_se.py` |
+| 11 | Financial targets and the delivery record | `guidance_track.py` |
+| 12 | Peer set | `peers_se.py` |
+| 13 | DCF inputs and industry benchmark | `macro_se.py` |
+| 14 | Verification: restatements, ties, cross-checks | `verify_filing.py` |
+| 15 | Red-flag screen | `references/red-flags-general.md` (+ `references/red-flags-smallcap.md` for MTF/small-cap issuers) |
+| 16 | Valuation, reverse DCF, scenarios, scorecard, recommendation | — |
+| 17 | Emit and validate the decision record; on a BUY or SELL, seed the thesis | `decision_record.py`, `thesis_ledger.py` |
+
+QUICK runs 1, 2, 4, 5, 8, 9, the recommendation and step 17. COMPARE runs the
+same steps plus the moat assessment and a light bear/base/bull scenario build —
+neither has its own numbered step in this table, since this list is the
+Swedish data-gathering sequence, not the analysis phases. STANDARD adds 3, 6,
+10, 12, 14, 15, and step 16 without the reverse DCF. DEEP adds 7, 11, 13 and
+the reverse DCF.
+
+Step 17 runs at every depth, in the depth-appropriate form: a QUICK or TLDR
+record carries no scenarios and no scorecard and says so with a reason code
+(§9), and only a BUY or SELL at STANDARD or DEEP seeds a thesis.
+
+Two things are never skipped at any depth: **step 1**, because analysing the
+wrong entity fast is worse than analysing the right one slowly, and **the honest
+statement of what could not be obtained**.

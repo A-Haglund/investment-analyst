@@ -294,7 +294,7 @@ used (9.0%) and what the 0.9-point gap does to the answer, and the bridge
 carries PV of cash flows through to a per-share point (EUR 68.00, SEK 761.60
 at the stated rate) that is only ever the base-case midpoint feeding the
 694-829 range — never a number printed on its own. Both live in
-`references/valuation.md`; neither needs a standalone extract at 800 words.
+`references/valuation-dcf.md`; neither needs a standalone extract at 800 words.
 The remaining chart forms — revenue and margin sparklines, the P/E range bar,
 the scorecard's bar column — are unchanged from `SKILL.md` §6 and sit here
 too; the answer keeps only the scenario range marker (Extract 4).

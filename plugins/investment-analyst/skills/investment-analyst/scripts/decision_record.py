@@ -155,7 +155,7 @@ REASON_CODES = {
 SEVERITIES = ("BLOCK", "WARN", "INFO")
 
 # --------------------------------------------------------------------------
-# Conviction caps. Documented in SKILL.md and references/data-quality.md as
+# Conviction caps. Documented in SKILL.md and references/conviction.md as
 # prose the model was asked to self-apply; grep for "conviction" across
 # scripts/ returned nothing before v3.0.0. Now they are enforced: conviction
 # is capped by the WEAKEST input, never averaged.

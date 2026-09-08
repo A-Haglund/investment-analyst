@@ -15,9 +15,7 @@ seconds, **under 150 words** (SKILL.md §4). This is the shortest form the syste
 
 Then **three to five plain sentences** between them, written for someone who is not an
 analyst. No jargon that a non-specialist would have to look up, no tables, no
-bullet lists of metrics. The verdict block carries all four lines verbatim: identity, 
-call with conviction, price with as-of timestamp and fair-value range (from multiples 
-against the company's own history), and scores.
+bullet lists of metrics. The verdict block carries all four lines verbatim: identity, call with conviction, price with as-of timestamp (SKILL.md §8 Phase 1) and fair-value range (from multiples against the company's own history), and scores.
 
 The prose must cover, in this order:
 
@@ -26,13 +24,9 @@ The prose must cover, in this order:
 - the single biggest thing that could make it wrong
 - the largest data gap, named in plain words
 
-## Tagging and uncertainty (SKILL.md §§1, 7)
+## Tagging and uncertainty: SKILL.md §1 and §7.1
 
-The tagging discipline governs the work but does not appear in the delivered answer. Uncertainty reaches the reader in plain words per SKILL.md §7. The Evidence block and decision record are produced but printed only on request.
-
-## Reader model (SKILL.md §7)
-
-Write for someone who owns shares and follows the news, not an analyst. Every financial term is glossed in six words or fewer on first use, or avoided entirely.
+## Reader model: SKILL.md §7
 
 ## Non-negotiable at this length
 
@@ -45,7 +39,7 @@ Brevity is where uncertainty gets quietly dropped. It must not be dropped here.
 - **Data confidence below 40 caps conviction at LOW** — say so in the prose.
   The cap is enforced, not remembered: attach the `DATA_CONFIDENCE_LOW` reason
   code to the decision record and `decision_record.py` refuses a conviction
-  above the ceiling (`references/data-quality.md` §7). TLDR depth carries a
+  above the ceiling (`references/conviction.md`). TLDR depth carries a
   ceiling of MEDIUM on its own.
 - **Emit the decision record even here** (SKILL.md §9), with no `fair_value`
   and no `scenario_weights` — the module records `DEPTH_NO_SCENARIOS` — and with
@@ -66,8 +60,4 @@ source list of any kind. Sources live in the Evidence block, which is
 underlying material — a trailing source list is that block leaking into the
 answer, and it is the single most common way this format fails.
 
-Answer in the language the user wrote in. For a Swedish question, every word of
-the answer is Swedish — the call, the conviction and both score names included,
-per SKILL.md §13's term table. Only the depth token (`TLDR`) stays as written,
-and the decision record and Evidence block, printed only on request, keep their
-English fields.
+Output language rule: SKILL.md §13

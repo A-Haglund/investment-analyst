@@ -117,7 +117,7 @@ goodwill? Were buybacks executed at sensible valuations or at the peak?
   - Germany, Norway, Denmark, Finland → BaFin, Finanstilsynet and
     Finanssivalvonta each run the equivalent PDMR register; France → AMF's
     Déclarations de dirigeants — see `europe.md` and
-    `red-flags-and-smallcap.md` for the endpoints, not restated here
+    `red-flags-general.md` for the endpoints, not restated here
 
 Read them correctly. **Open-market purchases are the signal.** Option exercises,
 RSU vesting and scheduled 10b5-1 sales carry little information. The Swedish
