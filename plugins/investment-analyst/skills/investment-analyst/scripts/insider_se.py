@@ -644,6 +644,31 @@ def build_analysis(rows, ref, earliest, disp_from):
 
 # --------------------------------------------------------------------- output
 
+def _attach_transactions(payload, displayed, args):
+    """Fill in payload["transactions"] (and its truncation/omission markers)
+    exactly once, so the ambiguous and single-issuer JSON branches cannot
+    drift apart on how --limit / --summary are applied.
+
+    --summary drops the per-transaction rows entirely: nothing downstream of
+    a normal analysis reads them, only the aggregate in "analysis" does, and
+    that aggregate (net direction, counts, totals, windows, source/as-of) is
+    left untouched - the evidence trail is not weakened, only the row dump.
+
+    Without --summary, --limit is honoured exactly as it is in text mode
+    (report_one() slices the same way): same semantics, same default (40).
+    """
+    if args.summary:
+        payload["transactions"] = []
+        payload["transactions_omitted"] = ("summary mode: aggregate/classification "
+                                            "only, see 'analysis'; pass --json without "
+                                            "--summary for the transaction rows")
+        return
+    limited = displayed[:args.limit]
+    payload["transactions"] = limited
+    payload["transactions_returned"] = len(limited)
+    payload["transactions_truncated"] = len(displayed) > len(limited)
+
+
 def print_analysis(an):
     ccy = an["currency"]
     d, m, dv = an["discretionary"], an["mechanical"], an["derivative"]
@@ -791,16 +816,21 @@ def report_one(label, rows, args, d_from, d_to, analysis_from, dropped, truncate
     for r in displayed:
         net[r["issuer"]][r["side"]] += r["value"]
 
-    print("%-11s %-22s %-19s %-5s %-30s %11s %9s"
-          % ("DATE", "ISSUER", "PDMR", "SIDE", "CATEGORY", "VOLUME", "VALUE"))
-    print("-" * 114)
-    for r in displayed[:args.limit]:
-        print("%-11s %-22.22s %-19.19s %-5s %-30.30s %11s %9s"
-              % (r["date"], r["issuer"], r["pdmr"] or "-", r["side"], r["category"],
-                 "{:,.0f}".format(r["volume"]),
-                 "{:,.0f}".format(r["value"] / 1000) + "k"))
-    if len(displayed) > args.limit:
-        print("... %d more (use --limit or --json)" % (len(displayed) - args.limit))
+    if args.summary:
+        print("(--summary: per-transaction rows omitted - %d row(s) in this range; "
+              "see the aggregate below)" % len(displayed))
+    else:
+        print("%-11s %-22s %-19s %-5s %-30s %11s %9s"
+              % ("DATE", "ISSUER", "PDMR", "SIDE", "CATEGORY", "VOLUME", "VALUE"))
+        print("-" * 114)
+        for r in displayed[:args.limit]:
+            print("%-11s %-22.22s %-19.19s %-5s %-30.30s %11s %9s"
+                  % (r["date"], r["issuer"], r["pdmr"] or "-", r["side"], r["category"],
+                     "{:,.0f}".format(r["volume"]),
+                     "{:,.0f}".format(r["value"] / 1000) + "k"))
+        if len(displayed) > args.limit:
+            print("... %d more (use --limit, --json, or --summary)"
+                  % (len(displayed) - args.limit))
 
     print()
     print("Net by issuer — ALL rows, compensation included (transaction value):")
@@ -831,6 +861,11 @@ def main():
     ap.add_argument("--to", dest="date_to", help="YYYY-MM-DD")
     ap.add_argument("--json", action="store_true", dest="as_json")
     ap.add_argument("--limit", type=int, default=40)
+    ap.add_argument("--summary", action="store_true",
+                    help="omit the per-transaction rows; keep only the "
+                         "aggregate/classification (net direction, counts, "
+                         "totals, windows, source and as-of). Applies to "
+                         "both --json and text output.")
     ap.add_argument("--no-widen", action="store_true", dest="no_widen",
                     help="do not extend the fetch to 730 days for the rolling "
                          "windows; analyse exactly the requested range")
@@ -912,14 +947,19 @@ def main():
                 displayed = [r for r in c["rows"] if r["date"] >= d_from]
                 analysis = (build_analysis(c["rows"], iso(d_to), analysis_from, d_from)
                             if c["rows"] else None)
-                matches.append({
+                entry = {
                     "issuer": c["display"], "also_filed_as": c["names"],
                     "isins": c["isins"], "leis": c["leis"],
                     "row_count": len(c["rows"]),
-                    "analysis": analysis, "transactions": displayed})
+                    "displayed_count": len(displayed),
+                    "analysis": analysis,
+                }
+                _attach_transactions(entry, displayed, args)
+                matches.append(entry)
             print(json.dumps({"issuer_query": args.issuer, "from": d_from, "to": d_to,
                               "analysis_from": analysis_from,
                               "ambiguous": True,
+                              "summary": bool(args.summary),
                               "ambiguity_note": "the query matched %d distinct issuers "
                                                  "(separated by LEI/ISIN); see "
                                                  "issuer_matches, nothing is summed"
@@ -936,24 +976,26 @@ def main():
         displayed = [r for r in rows if r["date"] >= d_from]
         analysis = (build_analysis(rows, iso(d_to), analysis_from, d_from)
                     if rows else None)
-        print(json.dumps({"issuer_query": args.issuer, "lei_query": args.lei,
-                          "isin_query": args.isin, "from": d_from, "to": d_to,
-                          "analysis_from": analysis_from,
-                          "ambiguous": False,
-                          "count": len(displayed),
-                          "analysis_row_count": len(rows),
-                          "excluded_cancelled_or_revised": dropped,
-                          "export_truncated_at_1000": truncated,
-                          "unparsed_volume_rows": parse_stats["unparsed_volume"],
-                          "unparsed_price_rows": parse_stats["unparsed_price"],
-                          "source": "Finansinspektionen Insynsregistret",
-                          "basis": "MAR Art. 19 PDMR notifications; only Status="
-                                   "Current rows; net computed from discretionary "
-                                   "open-market share trades only",
-                          "retrieved_utc": datetime.datetime.now(
-                              datetime.timezone.utc).isoformat(),
-                          "analysis": analysis,
-                          "transactions": displayed}, indent=2, ensure_ascii=False))
+        payload = {"issuer_query": args.issuer, "lei_query": args.lei,
+                  "isin_query": args.isin, "from": d_from, "to": d_to,
+                  "analysis_from": analysis_from,
+                  "ambiguous": False,
+                  "summary": bool(args.summary),
+                  "count": len(displayed),
+                  "analysis_row_count": len(rows),
+                  "excluded_cancelled_or_revised": dropped,
+                  "export_truncated_at_1000": truncated,
+                  "unparsed_volume_rows": parse_stats["unparsed_volume"],
+                  "unparsed_price_rows": parse_stats["unparsed_price"],
+                  "source": "Finansinspektionen Insynsregistret",
+                  "basis": "MAR Art. 19 PDMR notifications; only Status="
+                           "Current rows; net computed from discretionary "
+                           "open-market share trades only",
+                  "retrieved_utc": datetime.datetime.now(
+                      datetime.timezone.utc).isoformat(),
+                  "analysis": analysis}
+        _attach_transactions(payload, displayed, args)
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
         return
 
     print("Source: Finansinspektionen Insynsregistret (marknadssok.fi.se), retrieved %s"

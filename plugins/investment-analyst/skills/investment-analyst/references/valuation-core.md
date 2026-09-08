@@ -153,3 +153,125 @@ inventing a number:
 
 The rule is unchanged: an unsourceable number is `DATA NOT AVAILABLE`, never a
 plausible-looking invention.
+
+## Reverse DCF — the most useful output when no consensus exists
+
+Instead of producing a value, solve for what today's price already assumes.
+
+> **What future performance is today's share price requiring?**
+
+### There is no single implied future
+
+This is the mistake to avoid. Price is one number; the inputs are many. Any
+combination of growth, margin and terminal assumption that produces the same
+present value is equally consistent with the price. Solving for one variable
+while freezing the others produces a precise answer to a question nobody asked.
+
+So solve for **combinations and report a surface**, not a point:
+
+| Terminal EBIT margin | Implied 10y revenue CAGR |
+|---|---|
+| 15% | 14% |
+| 18% | 10% |
+| 21% | 7% |
+| 24% | 5% |
+
+Then place the company on it. If it has delivered 8% growth at a 19% margin for
+a decade, the row that matches its own history tells you whether the price is
+demanding more than the business has ever produced.
+
+### What to report
+
+```
+                        MARKET-IMPLIED    ACTUAL (TTM)    HISTORICAL (5y)
+Revenue CAGR                   ~10%             6.4%              8.1%
+EBIT margin                     18%            17.2%             16.4%
+FCF margin                      12%            11.0%             10.2%
+Terminal growth              2.5% (assumption, not solved)
+```
+
+Then a verdict in one sentence: the price requires **optimistic**,
+**approximately fair**, or **pessimistic** performance relative to the
+company's own record. Not relative to your hopes for it.
+
+### Never call this consensus
+
+A reverse DCF is a `MARKET-IMPLIED EXPECTATION`. Analyst consensus is a
+different object that this system cannot obtain. Where the user asks what the
+market expects and no licensed source exists, write
+`CONSENSUS DATA NOT AVAILABLE` and give the reverse DCF explicitly labelled as
+the substitute. The two must never be conflated in wording or in a table
+heading.
+
+## Scenarios
+
+Build three complete, internally consistent cases. Each must specify all six
+rows — a scenario that only changes the multiple is not a scenario.
+
+| | Bear | Base | Bull |
+|---|---|---|---|
+| Revenue (yr 5) | | | |
+| Revenue CAGR | | | |
+| EBIT margin | | | |
+| FCF | | | |
+| Exit multiple | | | |
+| **Fair value** | | | |
+
+Consistency rule: a bear case with collapsing revenue **and** an unchanged
+multiple is incoherent. Multiples compress when growth disappoints. Make the
+scenarios hang together economically.
+
+Assign probabilities that sum to 1.0 and justify them. Base case should not
+automatically be 60% — if the outcome is genuinely bimodal, say so.
+
+## Expected value and risk/reward
+
+```
+expected_value    = Σ (probability_i x fair_value_i)
+Expected return   = expected_value / current_price - 1
+Upside            = bull_value / current_price - 1
+Downside          = bear_value / current_price - 1
+Margin of safety  = 1 - current_price / base_value
+Risk/reward       = upside / |downside|
+```
+
+`EV` means enterprise value everywhere else in this file — use
+`expected_value` here to avoid the collision.
+
+Interpretation:
+
+- Margin of safety below 0 means you are paying above base-case value.
+- Risk/reward below 2:1 rarely justifies a BUY on a single name.
+- A high expected_value driven entirely by a low-probability bull case is not
+  the same as a robust one. Show expected_value with and without the bull case.
+
+## Ranges, not false precision
+
+A fair value carried to two decimals implies a precision the inputs cannot
+support. `Fair value = SEK 183.47` is not more informative than `SEK 175–200`;
+it is less honest, because it hides how wide the real uncertainty is.
+
+Report scenarios as ranges:
+
+```
+Bear    SEK 125–145
+Base    SEK 175–200
+Bull    SEK 240–275
+```
+
+Width the range from the sensitivity you already computed: if fair value moves
+from 176 to 198 across WACC ±1.5% and terminal growth ±1% — the same spread
+the mandatory sensitivity table above requires — that spread **is** the base
+range. A range narrower than your own sensitivity table is a contradiction.
+
+Give a point estimate only where the inputs justify it — a net-cash company on a
+stable multiple, say — and state why.
+
+## Presenting it
+
+State, in one sentence, **which two or three assumptions drive most of the
+valuation** — usually terminal margin, terminal growth and the discount rate.
+Then show what fair value becomes if each is wrong by a realistic margin.
+
+If the DCF and the multiples analysis disagree materially, do not average them.
+Explain which you trust for this business and why.

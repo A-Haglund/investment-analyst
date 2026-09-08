@@ -8,13 +8,13 @@ Give a QUICK read on: **$ARGUMENTS**
 Use the `investment-analyst` skill at **QUICK** depth (see `SKILL.md` §4).
 Target 2–4 minutes, **350 words maximum** (SKILL.md §4).
 
-## Output sections (less 3 and 5): SKILL.md §6.1
+## Output sections (less 3 and 5): SKILL.md §6
 
 At QUICK depth, sections 3 (Why the price is where it is) and 5 (Scenarios) are skipped, and remaining sections carry half the STANDARD word budget.
 
 At this depth the verdict block's second line ends at the upside range, with no expected return, and names the fair-value basis (multiples against the company's own history); the third line reads `Investeringsbetyg saknas — inget scorecard på denna nivå` beside `Datasäkerhet`, per SKILL.md §5.
 
-## Tagging and uncertainty: SKILL.md §1 and §7.1
+## Tagging and uncertainty: SKILL.md §1 and §7
 
 ## Reader model: SKILL.md §7
 

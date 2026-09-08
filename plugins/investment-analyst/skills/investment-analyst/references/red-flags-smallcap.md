@@ -29,7 +29,7 @@ came back empty.
 **Check the accounting-principles note before reading anything else.** It sits
 on the first page of the notes in every årsredovisning, so confirming the
 framework costs nothing. These venues are exactly where a Swedish GAAP (K3)
-filer is likely to sit rather than an IFRS one — `sweden.md`'s "Accounting
+filer is likely to sit rather than an IFRS one — `sweden-deep.md`'s "Accounting
 basis" section has the framework detail. On a K3 filer, restate goodwill
 amortisation and imputed lease costs before comparing to an IFRS peer, and
 read flags 9, 10 and 15 in `red-flags-general.md` with their K3 caveats rather than the IFRS
@@ -304,7 +304,8 @@ Push down to **LOW** where any one of these holds:
 - cash runway under 12 months
 - fewer than three years of reported history
 - a material figure taken only from `--figures` with the PDF unread
-- three or more unresolved flags from Part 1 §2 in `red-flags-general.md`
+- three or more unresolved flags from the cash-and-earnings-quality group
+  (flag 5 in `red-flags-quick.md`; flags 6-9 in Part 1 §2 of `red-flags-general.md`)
 
 These five are judgement, not code: each one belongs on the record as the
 reason code that fits it — `DATA_CONFIDENCE_LOW` for the evidence cases,

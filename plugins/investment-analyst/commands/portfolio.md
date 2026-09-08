@@ -16,7 +16,7 @@ stock analyses, and it asks a different question from `/screen`. A screen ranks
 what you could buy. A review asks whether each holding belongs and, for those
 that do, whether to ÖKA, BEHÅLL, MINSKA or SÄLJ HELT (SKILL.md §13).
 
-## Tagging and uncertainty: SKILL.md §1 and §7.1
+## Tagging and uncertainty: SKILL.md §1 and §7
 
 ## Reader model: SKILL.md §7
 

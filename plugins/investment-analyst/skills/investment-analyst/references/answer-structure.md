@@ -1,47 +1,10 @@
-# Structure of a STANDARD or DEEP analysis
+# The underlying material and the charts
 
-Loaded at STANDARD and DEEP only. TLDR, QUICK and COMPARE do not produce the
-seven-section answer — their shape is fixed by `SKILL.md` §5 and §5.1 — so they
-never need this file.
-
-Two layers. The **answer** is what you print. The **underlying material** is
-produced in full and printed only when the reader asks for it (§7). The work is
-identical either way; only the delivery differs.
-
-### The answer — seven sections, in this order
-
-| # | Section | Carries | Form | Words |
-|---|---|---|---|---|
-| 1 | **Omdöme** | the call, in ten seconds | monospace header + five labelled plain lines | 150 |
-| 2 | **Vad bolaget är** | what it owns and does *now* | 3–5 short marked bullets | 120 |
-| 3 | **Varför priset ligger där det ligger** | the one thing driving the case | 2–4 sentences | 90 |
-| 4 | **Talar för / Talar emot** | evidence already established, compressed | two marked lists, 3–5 items each | 180 |
-| 5 | **Scenarier** | bear, base, bull, each with a value | one table + the range marker | 60 |
-| 6 | **Vad rekommendationen betyder i praktiken** | the call translated into meaning | 2–4 sentences | 90 |
-| 7 | **Slutsats** | signal line, `Bevakning`, `Horisont`, `Viktigast` | §9 | 110 |
-
-**The per-section budget is the enforceable form of the 800-word cap.** A
-global cap cannot be checked while writing; a section budget can. Count as you
-close each section. Borrowing across sections is allowed only downward — a
-short section does not license a long one, since the reader's patience is not
-transferable. At DEEP every budget scales by 1.5; at QUICK sections 3 and 5 are
-dropped and the rest are halved.
-
-**Nothing follows section 7.** No source list, no bibliography, no appendix, no
-"Sources:" line. Sources live in the Evidence block, which is underlying
-material — a trailing source list is that block leaking into the answer, and it
-is the single most common way this format fails.
-
-Section 6 is the one most often skipped and the one a non-specialist needs most.
-`HOLD` is a word about a price, not an instruction to a holder. Section 6
-explains **what the call means** — "jag tycker inte den är dyr nog att sälja,
-men inte billig nog att köpa mer". `Äger du den redan` in `Slutsats` then says
-**what to do now**. Two different beats; keep both, and do not let section 6
-drift into repeating the closing advice.
-
-**DEEP deepens these sections; it never adds new ones.** Omit one only when it
-genuinely does not apply, and say so rather than dropping it silently. QUICK
-drops sections 3 and 5; TLDR carries 1 and 7 only.
+Loaded at STANDARD and DEEP. The seven sections themselves, their word budgets
+and the shallow-depth shape are in `SKILL.md` §6 — every depth that writes a
+sectioned answer needs those, so they are not gated here. What *is* gated is
+the material below: TLDR and QUICK produce no snapshot table, no financial
+statements, no scorecard and no chart.
 
 ### The underlying material — produced, printed on request
 

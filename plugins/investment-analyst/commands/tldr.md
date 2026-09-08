@@ -24,7 +24,7 @@ The prose must cover, in this order:
 - the single biggest thing that could make it wrong
 - the largest data gap, named in plain words
 
-## Tagging and uncertainty: SKILL.md §1 and §7.1
+## Tagging and uncertainty: SKILL.md §1 and §7
 
 ## Reader model: SKILL.md §7
 

@@ -77,6 +77,38 @@ def soft_load(name):
         return None
 
 
+def state_home():
+    """Root directory for this plugin's persistent state - portfolios, the
+    thesis ledger, watchlists, guidance tracking - normally
+    ~/.investment-analyst.
+
+    Overridable via the INVESTMENT_ANALYST_HOME environment variable. This
+    is the one home shared by every store; the per-store env vars
+    (PORTFOLIO_STORE_HOME, THESIS_LEDGER_HOME, WATCHLIST_STORE_HOME,
+    GUIDANCE_STORE_HOME) are checked by each store BEFORE this function is
+    even called and continue to take priority when set - they exist so the
+    test suite never touches a real home directory, and this function does
+    not change that.
+
+    The real reason this exists: a scheduled/cloud run starts in a fresh
+    container every time, so an unset override resolves under that
+    container's throwaway home directory and every run sees an empty store
+    - the daily portfolio job then finds no stored thesis for any holding
+    and re-runs full analysis on all of them instead of a cheap HOLD.
+    Pointing INVESTMENT_ANALYST_HOME at a mounted, persistent directory
+    fixes that.
+
+    `~` and environment variables are expanded in the override, same as a
+    shell would. An unset or empty override reproduces today's exact
+    ~/.investment-analyst path - this function is purely additive.
+    """
+    override = os.environ.get("INVESTMENT_ANALYST_HOME")
+    if override:
+        expanded = os.path.expandvars(os.path.expanduser(override))
+        return os.path.abspath(expanded)
+    return os.path.join(os.path.expanduser("~"), ".investment-analyst")
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])

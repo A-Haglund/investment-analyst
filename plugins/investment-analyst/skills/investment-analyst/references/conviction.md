@@ -6,7 +6,7 @@ not have to read the rest of `data-quality.md` to get to it. The caps are
 enforced in `scripts/decision_record.py`, which refuses a decision record
 whose conviction exceeds the ceiling.
 
-## 7. Conviction
+## Conviction
 
 **This section is the normative source for the conviction ladder and its
 caps.** SKILL.md states no cap value and points here. Where a command file
@@ -37,7 +37,7 @@ conviction exceeds the ceiling** rather than storing it and printing a warning.
 | `CAP_VENUE_MICROCAP` | reason code `VENUE_MICROCAP` — a microcap on First North, Spotlight or NGM | MEDIUM |
 | `CAP_CONFLICT` | reason code `CONFLICT_UNRESOLVED` on a material figure | LOW |
 | `CAP_THESIS_BROKEN` | reason code `THESIS_BROKEN` — a stored breaker has fired | LOW |
-| `CAP_DATA_CONFIDENCE` | reason code `DATA_CONFIDENCE_LOW` — data confidence below the floor of 40 (§5) | LOW |
+| `CAP_DATA_CONFIDENCE` | reason code `DATA_CONFIDENCE_LOW` — data confidence below the floor of 40 — see "Data confidence" below | LOW |
 
 **The weakest input sets the ceiling; the caps are never averaged.** A microcap
 run at QUICK depth with an unresolved conflict is capped at LOW by the
@@ -60,3 +60,36 @@ Three consequences worth stating plainly:
 **A strong valuation with weak evidence is `KÖP — LÅG ÖVERTYGELSE`, not a strong
 buy** (SKILL.md §13). Write it that way. Hiding uncertainty behind a confident
 recommendation is the specific failure this whole framework exists to prevent.
+
+## Data confidence — how the score the ladder keys on is computed
+
+Scored out of 100, separately from the investment score. They measure different
+things: the investment score is about the company, data confidence is about how
+well we know it.
+
+| Component | Weight | What full marks looks like |
+|---|---|---|
+| Primary-source coverage | 30 | Every material figure from tier 1 |
+| Cross-verification | 25 | Revenue, EBIT, net income, equity and share count all `VERIFIED` |
+| Identity certainty | 10 | Legal entity, ISIN, LEI, orgnr, share classes and fiscal year all confirmed |
+| Completeness | 15 | No material metric is `DATA NOT AVAILABLE` |
+| Freshness | 10 | Latest report and a same-session price |
+| Conflicts | 10 | No unresolved `CONFLICT` |
+
+The table above is **how the score is computed, not how it is printed.** The
+printed form is the `EVIDENCE` block in `references/verification.md`: the score
+in its header, the grouped figures beneath it, and the `TALLY` line closing it.
+There is no second `DATA QUALITY` block — the component weights are working
+notes, and publishing both invites the two to drift apart.
+
+If a component is worth showing, show it in the tally. `Cross-verified figures
+7 of 9` belongs on the tally line; `Cross-verification weight 25` does not
+belong anywhere in the output.
+
+Rough calibration. A Swedish large cap with ESEF, an annual report and a live
+price lands roughly 70–95. Missing interim EBIT disclosure, untagged notes, or
+an ownership register that is only a floor can pull an otherwise well-covered
+large cap toward 60 — as the Sandvik exemplar used throughout this repo shows,
+at 61/100. A First North microcap with no ESEF, figures extracted from a
+release and no short or ownership data lands 35–55. If it lands below 40, say
+plainly that the evidence does not support a confident view.
