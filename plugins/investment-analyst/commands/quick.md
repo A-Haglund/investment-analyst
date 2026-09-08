@@ -8,36 +8,24 @@ Give a QUICK read on: **$ARGUMENTS**
 Use the `investment-analyst` skill at **QUICK** depth (see `SKILL.md` §4).
 Target 2–4 minutes, **350 words maximum** (SKILL.md §4).
 
-## Output: seven sections per SKILL.md §6, minus sections 3 and 5
+## Output sections (less 3 and 5): SKILL.md §6.1
 
-1. **Verdict block** (SKILL.md §5) — the call in ten seconds
-2. **What the company is** — what it owns and does now, 3–5 marked bullets
-4. **Talar för / Talar emot** — evidence already established, two marked lists, 3–5 items each
-6. **What the call means in practice** — the call translated into action, 2–4 sentences
-7. **Slutsats** — signal line, Viktigast per SKILL.md §9
-
-Sections 3 (Why the price is where it is) and 5 (Scenarios) are skipped at QUICK
-depth, and the remaining sections carry half the STANDARD word budget set in
-SKILL.md §6 — do not restate that table here.
+At QUICK depth, sections 3 (Why the price is where it is) and 5 (Scenarios) are skipped, and remaining sections carry half the STANDARD word budget.
 
 At this depth the verdict block's second line ends at the upside range, with no expected return, and names the fair-value basis (multiples against the company's own history); the third line reads `Investeringsbetyg saknas — inget scorecard på denna nivå` beside `Datasäkerhet`, per SKILL.md §5.
 
-## Tagging and uncertainty (SKILL.md §§1, 7)
+## Tagging and uncertainty: SKILL.md §1 and §7.1
 
-The tagging discipline governs the work but does not appear in the delivered answer. Uncertainty reaches the reader in plain words per SKILL.md §7. The Evidence block and decision record are produced but printed only on request.
-
-## Reader model (SKILL.md §7)
-
-Write for someone who owns shares and follows the news, not an analyst. Every financial term is glossed in six words or fewer on first use, or avoided entirely.
+## Reader model: SKILL.md §7
 
 ## Non-negotiable requirements
 
 - Identity resolution is **not** skippable, even at QUICK depth. Analysing the wrong legal entity fast is worse than analysing the right one slowly.
-- Fetch the price fresh and print its as-of timestamp
+- Fetch fresh price and print as-of timestamp: SKILL.md §8 Phase 1
 - `DATA NOT AVAILABLE` rather than a guessed number
 - Data Confidence sits on the scores line. QUICK depth carries a conviction
   ceiling of MEDIUM, computed and enforced by `decision_record.py` — a record
-  above it is refused (`references/data-quality.md` §7)
+  above it is refused (`references/conviction.md`)
 - Text output only, no artifact
 
 ## Record the decision (SKILL.md §9)

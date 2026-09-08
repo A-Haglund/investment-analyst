@@ -621,7 +621,7 @@ def build(portfolio, as_of=None, foreign_threshold_pct=20.0):
 
 
 # ==========================================================================
-# Portfolio fit for a single-name decision (references/portfolio.md's
+# Portfolio fit for a single-name decision (references/ranking.md's
 # "Comparative ranking" section names PORTFOLIO FIT as a ranking input - "the
 # best standalone idea may be the worst addition if it doubles an existing
 # exposure" - but nothing in this codebase computed it before this function).

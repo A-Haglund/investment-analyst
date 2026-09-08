@@ -16,38 +16,21 @@ Use the `investment-analyst` skill.
 Strip the flag from the company name before resolving the ticker. State the
 depth you are running in the first line of the output.
 
-## Output: seven sections per SKILL.md §6
+## Output sections and word budgets: SKILL.md §6.1
 
-1. **Verdict block** (SKILL.md §5) — the call in ten seconds
-2. **What the company is** — what it owns and does now, 3–5 marked bullets
-3. **Why the price is where it is** — the one thing driving the case, 2–4 sentences
-4. **Talar för / Talar emot** — evidence already established, two marked lists, 3–5 items each
-5. **Scenarios** — bear, base, bull with a value, one table plus range marker
-6. **What the call means in practice** — the call translated into action, 2–4 sentences
-7. **Slutsats** — signal line, Bevakning, Horisont, Viktigast per SKILL.md §9
+At DEEP every budget scales ×1.5. At QUICK, sections 3 and 5 are dropped and the rest are halved.
 
-Each section carries its own word budget — SKILL.md §6 sets them, do not restate
-the table here. At DEEP every budget scales ×1.5. At QUICK, sections 3 and 5 are
-dropped and the rest are halved.
+## Tagging and uncertainty: SKILL.md §1 and §7.1
 
-## Tagging and uncertainty (SKILL.md §§1, 7)
-
-The tagging discipline (FACT / ESTIMATE / ASSUMPTION / OPINION) governs the work but does not appear in the delivered answer. Uncertainty reaches the reader in plain words per SKILL.md §7: a warning about a single-sourced figure becomes "bolagets egen siffra, ingen oberoende källa bekräftar den", an estimate becomes "analytikernas prognos, inte ett utfall", and so on. The Evidence block and the decision record are produced in full but printed only when the reader asks to see the underlying material.
-
-## Reader model (SKILL.md §7)
-
-Write for someone who owns shares and follows the news, not an analyst. Every financial term is glossed in six words or fewer on first use, or avoided entirely.
+## Reader model: SKILL.md §7
 
 ## Non-negotiable requirements
 
-- **Resolve identity before anything else.** Run the company-resolution step and
-  do not begin analysis on an ambiguous name. "Volvo" is AB Volvo *or* Volvo Car
-  AB — two listed companies, two sets of filings. If confidence is low, stop and
-  ask.
+- **Resolve identity before anything else:** Identity resolution: SKILL.md §8 Phase 0.
 - Route the company (Swedish regulated market, Swedish MTF, other Nordic, French, German) and use the matching source chain. Read
   `references/source-registry.md` for which source is authoritative per data
   type — do not decide that ad hoc.
-- Fetch the price fresh and print its as-of timestamp.
+- Fetch fresh price and print as-of timestamp: SKILL.md §8 Phase 1.
 - Write `DATA NOT AVAILABLE` for anything you cannot source. Do not estimate
   around a gap without saying you are doing so.
 - Include the trigger table as `Bevakning` in the closing block — the single
@@ -58,7 +41,7 @@ Write for someone who owns shares and follows the news, not an analyst. Every fi
   on the recommendation line. A strong valuation on weak evidence is
   `KÖP — LÅG ÖVERTYGELSE` (SKILL.md §13), never a strong buy. The conviction
   ceiling is computed and enforced by `decision_record.py`
-  (`references/data-quality.md` §7); a record above it is refused.
+  (`references/conviction.md`); a record above it is refused.
 
 ## Record the decision, seed the thesis
 

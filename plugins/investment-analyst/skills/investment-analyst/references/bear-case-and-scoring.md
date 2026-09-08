@@ -137,7 +137,7 @@ Two failure modes to guard against:
 
 Conviction measures confidence in the analysis, not enthusiasm for the stock,
 and it is **capped by the weakest input rather than averaged**. The full ladder
-and its hard caps live in `references/data-quality.md` §7 — this section does
+and its hard caps live in `references/conviction.md` — this section does
 not restate them.
 
 A high score with low conviction is not a strong buy — it is a small position,

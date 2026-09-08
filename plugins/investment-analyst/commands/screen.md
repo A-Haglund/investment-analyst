@@ -5,17 +5,16 @@ argument-hint: [nothing to search the market, or tickers/sector/size]
 
 Find the most attractive opportunities on a risk/reward basis: **$ARGUMENTS**
 
-Use the `investment-analyst` skill with `references/portfolio.md`.
+Use the `investment-analyst` skill with `references/ranking.md` for the
+ranking method.
 
 **Delivered length: the ranking table, plus 80 words per top candidate** (SKILL.md §4).
 
-## Tagging and uncertainty (SKILL.md §§1, 7)
+## Tagging and uncertainty: SKILL.md §1 and §7.1
 
-The tagging discipline governs the work but does not appear in the delivered answer. Uncertainty reaches the reader in plain words per SKILL.md §7. The Evidence block and decision record are produced but printed only on request.
+## Reader model: SKILL.md §7
 
-## Reader model (SKILL.md §7)
-
-Write for someone who owns shares and follows the news, not an analyst. Every financial term is glossed in six words or fewer on first use, or avoided entirely. Keep prose per candidate to 80 words or less; longer, it blocks the reader.
+Keep prose per candidate to 80 words or less; longer, it blocks the reader.
 
 To review holdings you already own, use `/portfolio` instead.
 
@@ -141,7 +140,7 @@ Process:
 
 ## Rules
 
-- Fetch all prices in one pass; print the as-of timestamp once.
+- Fetch all prices in one pass; print as-of timestamp once (SKILL.md §8 Phase 1).
 - Print expected return to one decimal place; upside, downside and margin of
   safety to whole percent.
 - Never present a screen output as a recommendation to buy without the

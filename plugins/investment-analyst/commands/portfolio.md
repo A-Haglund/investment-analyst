@@ -16,13 +16,11 @@ stock analyses, and it asks a different question from `/screen`. A screen ranks
 what you could buy. A review asks whether each holding belongs and, for those
 that do, whether to ÖKA, BEHÅLL, MINSKA or SÄLJ HELT (SKILL.md §13).
 
-## Tagging and uncertainty (SKILL.md §§1, 7)
+## Tagging and uncertainty: SKILL.md §1 and §7.1
 
-The tagging discipline governs the work but does not appear in the delivered answer. Uncertainty reaches the reader in plain words per SKILL.md §7. The Evidence block and decision record are produced but printed only on request.
+## Reader model: SKILL.md §7
 
-## Reader model (SKILL.md §7)
-
-Write for someone who owns shares and follows the news, not an analyst. Every financial term is glossed in six words or fewer on first use, or avoided entirely. Cap the prose per holding at 80 words; any longer, the review is unreadable.
+Cap prose per holding at 80 words; any longer, the review is unreadable.
 
 ## Review process
 
@@ -166,7 +164,7 @@ Rules:
 - **Conviction caps at MEDIUM** for any holding not taken to depth: a breaker
   firing or an alert triggering is not a full analysis. Where a holding's
   decision record is emitted, `decision_record.py` enforces the ceiling
-  (`references/data-quality.md` §7) — and a fired breaker carries
+  (`references/conviction.md`) — and a fired breaker carries
   `THESIS_BROKEN`, which caps it at LOW, not MEDIUM.
 
 - **Data Confidence** sits on the portfolio line, reflecting the lowest

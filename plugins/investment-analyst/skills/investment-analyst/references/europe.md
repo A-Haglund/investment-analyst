@@ -171,7 +171,7 @@ Rules:
    FX cancels.
 3. Convert only at the final step, when comparing a per-share value to a market
    price, and state the FX rate and its date.
-4. Discount cash flows at a rate in their own currency (see `valuation.md`).
+4. Discount cash flows at a rate in their own currency (see `valuation-dcf.md`).
 
 ## Accounting basis
 

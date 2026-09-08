@@ -6,17 +6,15 @@ argument-hint: <ticker> <ticker> <ticker> ...
 Compare these companies head to head: **$ARGUMENTS**
 
 Use the `investment-analyst` skill at **COMPARE** depth (see `SKILL.md` §4),
-and read `references/portfolio.md` for the ranking method.
+and read `references/ranking.md` for the ranking method.
 
 **Delivered length: the ranking table, plus 80 words per company** (SKILL.md §4).
 
-## Tagging and uncertainty (SKILL.md §§1, 7)
+## Tagging and uncertainty: SKILL.md §1 and §7.1
 
-The tagging discipline governs the work but does not appear in the delivered answer. Uncertainty reaches the reader in plain words per SKILL.md §7: single-sourced figures as "bolagets egen siffra, ingen oberoende källa bekräftar den", estimates as "analytikernas prognos, inte ett utfall". The Evidence block and decision record are produced but printed only on request.
+## Reader model: SKILL.md §7
 
-## Reader model (SKILL.md §7)
-
-Write for someone who owns shares and follows the news, not an analyst. Every financial term is glossed in six words or fewer on first use, or avoided entirely. Cap the prose per company name at 80 words; any longer, the comparison is unreadable.
+Cap prose per company at 80 words; any longer, the comparison is unreadable.
 
 ## Requirements
 
@@ -28,7 +26,7 @@ Write for someone who owns shares and follows the news, not an analyst. Every fi
   scorecard — and therefore produces **no Investment Score**. COMPARE depth
   carries a conviction ceiling of MEDIUM, computed and enforced by
   `decision_record.py`; a record above it is refused
-  (`references/data-quality.md` §7).
+  (`references/conviction.md`).
 - **One decision record per company** (SKILL.md §9), each with
   `producer: compare` and its own identity, emitted as JSON and rendered rather
   than typed. COMPARE runs light scenarios, so its records carry a fair value
@@ -50,7 +48,7 @@ Write for someone who owns shares and follows the news, not an analyst. Every fi
   Data Confidence is not optional: COMPARE includes everything QUICK produces,
   and QUICK states it.
 - Rank on expected return per unit of downside — COMPARE's light scenarios give
-  this a real basis, per `references/portfolio.md`.
+  this a real basis, per `references/ranking.md`.
 - Print expected return to one decimal place; upside, downside and margin of
   safety to whole percent.
 - The general rule: a column that no depth in the run produces is dropped,
