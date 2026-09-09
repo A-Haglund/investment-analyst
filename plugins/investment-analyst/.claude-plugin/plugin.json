@@ -1,7 +1,7 @@
 {
   "name": "investment-analyst",
   "version": "3.5.0",
-  "description": "Sweden-first equity research on free, keyless primary sources - no API keys, no paid feeds, no identifying requests. Enforces provenance, temporal validity, source independence and the decision's own arithmetic in code rather than instructions. Sizes the position too: scenario distribution to fractional Kelly, uncertainty adjustment, conviction ceiling, bear-case risk budget, liquidity and portfolio caps, graded concentration - a missing input returns insufficient_data, and NO_BET is the judgement that the edge does not justify a position. Scores its own scenario probabilities with proper scoring rules and offers no calibration adjustment below its sample floor. Plain-language answers; full evidence and valuation build on request. TTM engine, valuation gate, validated decision record with enforced conviction caps, falsifiable thesis ledger, portfolio review, 1326-test regression suite covering the instruction layer and the sizing invariants as well as the code. Screens Nasdaq Stockholm, Copenhagen and Helsinki plus Oslo Bors; Sweden remains the default.",
+  "description": "Sweden-first equity research on free, keyless primary sources - no API keys, no paid feeds. Provenance, temporal validity and the decision's own arithmetic are enforced in code, not instructions. Sizes the position too: scenario distribution to fractional Kelly, then uncertainty, conviction ceiling, bear-case risk budget, liquidity and portfolio caps. TTM engine, valuation gate, validated decision record, thesis ledger, portfolio review. Screens Stockholm, Copenhagen, Helsinki and Oslo.",
   "author": {
     "name": "Adam Haglund"
   },
