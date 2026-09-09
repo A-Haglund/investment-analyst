@@ -61,6 +61,12 @@ Three consequences worth stating plainly:
 buy** (SKILL.md §13). Write it that way. Hiding uncertainty behind a confident
 recommendation is the specific failure this whole framework exists to prevent.
 
+Conviction also sets a ceiling on position size, not only on the words used to
+describe it. That ladder of position-size ceilings is enforced in
+`scripts/position_sizing.py`, the same way the conviction caps above are
+enforced in `decision_record.py`; the values live there and are deliberately
+not restated here.
+
 ## Data confidence — how the score the ladder keys on is computed
 
 Scored out of 100, separately from the investment score. They measure different

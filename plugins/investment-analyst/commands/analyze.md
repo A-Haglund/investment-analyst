@@ -63,6 +63,13 @@ round. If the record is refused, fix the record: the arithmetic, the conviction
 ceiling, the reason codes and the identity are all checked, and a refusal names
 which one failed.
 
+Once the record validates, `scripts/position_sizing.py --from-decision
+decision.json --liquidity liq.json --emit-record decision.json` sizes the
+position and writes the sizing telemetry back onto the record, so step 3
+files that telemetry with `--decide`; never size by hand. Pass `--portfolio`
+too where a portfolio is loaded — without those two the liquidity and
+portfolio caps cannot bind and say so.
+
 **2. On a BUY or SELL call at STANDARD or DEEP depth, write the thesis** — one
 falsifiable sentence, with the breakers taken verbatim from the trigger table
 you already printed as `Bevakning`. That table's rows are numeric and

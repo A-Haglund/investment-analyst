@@ -231,19 +231,30 @@ the row is refused and not stored.
 
 ## Position sizing
 
-Assess each holding against:
+Run `scripts/position_sizing.py <request.json> --json` rather than sizing by
+hand — `--from-decision <record.json>` reads a validated record. The model
+supplies the scenario distribution and confidences; the engine returns
+target, current, delta and action from Kelly, uncertainty/conviction and
+liquidity/portfolio caps. A missing input returns `insufficient_data`; `NO_BET`
+is the judgement that the edge does not justify a position. No cap, no Kelly
+fraction, no formula here — they live in the script.
 
-- **Weight versus conviction.** The largest position should be the highest
-  conviction, not the one that has run the most. Flag any position that grew
-  into its size rather than being sized deliberately.
-- **Weight versus downside.** Size on bear-case loss, not on volatility.
-  A position where the bear case is −60% carries twice the portfolio risk of one
-  at −30% at the same weight.
-- **Kelly sanity check.** Full Kelly is far too aggressive for equities; use it
-  only as an upper bound and note that a quarter-Kelly is the practical version.
-- **Liquidity.** For Swedish small caps in particular, compare position size
-  against average daily volume. A position taking more than a few days to exit
-  is illiquid regardless of its market cap.
+Size on bear-case loss, not volatility — the engine enforces this as a risk
+budget, so −60% buys half the weight of −30% at the same edge when the risk
+budget is the binding constraint. Give it
+`--portfolio` and `--liquidity`: the caps it is not given are reported as not
+checked, and a Swedish small cap taking more than a few days to exit is
+illiquid whatever its market cap says.
+
+What it does not replace:
+
+- **Weight versus conviction.** The largest position is the highest
+  conviction, not the one that ran the most; flag one that grew into its size
+  rather than being sized deliberately.
+- **Judgement on the scenarios themselves.** The engine takes the
+  distribution as given. `forecast_scoring.py` measures those forecasts
+  going forward but adjusts nothing today; it cannot tell you the
+  probabilities were wrong.
 
 ## Concentration risk
 

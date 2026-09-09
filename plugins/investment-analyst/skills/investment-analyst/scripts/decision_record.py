@@ -77,6 +77,13 @@ DEPTHS = ("TLDR", "QUICK", "COMPARE", "STANDARD", "DEEP", "PORTFOLIO", "SCREEN")
 
 PRODUCERS = ("analyze", "quick", "tldr", "compare", "screen", "portfolio")
 
+# position_sizing.py's telemetry() emits exactly these seven action tokens.
+# Duplicated here as a closed vocabulary for the same reason VERDICTS and
+# CONVICTIONS are: a free-text action cannot be counted later, and this file
+# refuses one that is not on the list rather than storing it.
+POSITION_SIZING_ACTIONS = ("NO_BET", "WATCH", "INITIATE", "ADD", "HOLD",
+                           "TRIM", "EXIT")
+
 # An assumption's epistemic class. Mirrors SKILL.md's evidence tags, minus
 # FACT: a fact is not an assumption, and putting one here would be a category
 # error the whole system exists to prevent.
@@ -332,6 +339,66 @@ def normalise_implied_expectations(raw):
 
 
 # --------------------------------------------------------------------------
+# position_sizing - OPTIONAL, ADDITIVE telemetry so calibration.py can later
+# measure sizing decisions forward, on the same forward-only footing as
+# everything else calibration.py reads. A record that carries none of this
+# validates exactly as it did before this field existed.
+#
+# THIS DOES NOT RECOMPUTE POSITION SIZING. That arithmetic (raw Kelly, the
+# fractional cut, the uncertainty haircut) lives in position_sizing.py and
+# stays there - "a value has exactly one home" applies here exactly as it
+# does to the conviction ladder, and duplicating the Kelly math in this file
+# would create a second, driftable copy of it. The only check performed below
+# is the one that is FREE: when target, current and delta are all present,
+# they must agree with each other, the same posture already applied a few
+# lines up to expected_return and margin_of_safety - a persisted number that
+# disagrees with its own inputs is refused rather than stored.
+#
+# decision_record.py does NOT import position_sizing.py. The dependency runs
+# one way: position_sizing.telemetry() produces a dict shaped to satisfy this
+# validator, never the reverse.
+# --------------------------------------------------------------------------
+
+def normalise_position_sizing(raw):
+    """None when absent (the field stays entirely off the record, exactly as
+    before this existed). Otherwise a light-touch validated copy, or
+    DecisionError."""
+    if not isinstance(raw, dict):
+        raise DecisionError(
+            "position_sizing must be an object, got %s" % type(raw).__name__)
+
+    action = raw.get("action")
+    if action not in POSITION_SIZING_ACTIONS:
+        raise DecisionError(
+            "position_sizing.action %r is not one of %s"
+            % (action, ", ".join(POSITION_SIZING_ACTIONS)))
+
+    out = dict(raw)
+    for key in ("target", "current", "delta"):
+        v = out.get(key)
+        if v is None:
+            continue
+        try:
+            out[key] = float(v)
+        except (TypeError, ValueError):
+            raise DecisionError(
+                "position_sizing.%s is not a number: %r" % (key, v))
+
+    target, current, delta = out.get("target"), out.get("current"), out.get("delta")
+    if target is not None and current is not None and delta is not None:
+        expected_delta = target - current
+        if abs(delta - expected_delta) > TOLERANCE_PP:
+            raise DecisionError(
+                "position_sizing.delta %.4f does not match target - current "
+                "= %.4f. The record is refused rather than stored: a "
+                "persisted number that disagrees with its own inputs is "
+                "worse than none." % (delta, expected_delta))
+
+    out["action"] = action
+    return out
+
+
+# --------------------------------------------------------------------------
 # Validation
 # --------------------------------------------------------------------------
 
@@ -422,6 +489,13 @@ def validate(rec, strict=True):
     if not price.get("as_of"):
         raise DecisionError("price.as_of is required - never present a stale "
                             "price as current")
+
+    # --- position sizing telemetry (optional, additive) -------------------
+    # Only touched when the field is present at all - an absent field must
+    # leave the record byte-for-byte as it would have validated before this
+    # existed, with no new key and no new warning.
+    if "position_sizing" in out and out["position_sizing"] is not None:
+        out["position_sizing"] = normalise_position_sizing(out["position_sizing"])
 
     # --- scenarios and the arithmetic identities --------------------------
     fv = out.get("fair_value")
@@ -786,6 +860,40 @@ def selftest():
           any(c["code"] == "DEPTH_NO_SCENARIOS" for c in qrec["reason_codes"]))
     check("QUICK must not carry an expected return",
           qrec["expected_return"] is None)
+
+    # position_sizing is optional and additive: absent, it changes nothing.
+    plain_rec, plain_warns = validate(_sandvik_fixture())
+    check("a record with no position_sizing must carry no such key",
+          "position_sizing" not in plain_rec)
+    check("a record with no position_sizing must raise no new warning",
+          plain_warns == [])
+
+    with_sizing = _sandvik_fixture()
+    with_sizing["position_sizing"] = {
+        "action": "ADD", "target": 0.06, "current": 0.04, "delta": 0.02}
+    sized_rec, _ = validate(with_sizing)
+    check("position_sizing must round-trip through validate() unchanged",
+          sized_rec["position_sizing"] ==
+          {"action": "ADD", "target": 0.06, "current": 0.04, "delta": 0.02})
+
+    bad_delta = _sandvik_fixture()
+    bad_delta["position_sizing"] = {
+        "action": "ADD", "target": 0.06, "current": 0.04, "delta": 0.5}
+    try:
+        validate(bad_delta)
+        check("a position_sizing delta that disagrees with target-current "
+              "must be refused", False)
+    except DecisionError:
+        pass
+
+    bad_action = _sandvik_fixture()
+    bad_action["position_sizing"] = {"action": "BUY_MORE"}
+    try:
+        validate(bad_action)
+        check("a position_sizing action outside the seven tokens must be "
+              "refused", False)
+    except DecisionError:
+        pass
 
     block = render_decision_block(_sandvik_fixture())
     check("block should open with DECISION", block.startswith("DECISION — SAND.ST"))

@@ -41,7 +41,7 @@ with its own inputs is worse than no record.
 remember — `grep conviction scripts/*.py` returned nothing before this release.
 They are now computed from the depth and the run's reason codes, capped by the
 weakest input rather than averaged, and the full ladder lives in one place:
-`references/data-quality.md` §7.
+`references/conviction.md`.
 
 **Decisions and theses are both stored, and they are different objects.**
 `thesis_ledger.py --decide` files a validated decision; `--add` files a

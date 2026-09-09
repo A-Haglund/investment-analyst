@@ -171,6 +171,13 @@ Rules:
   confidence among all holdings taken to depth plus the cost of the layered
   approach itself.
 
+- **Position size comes from the engine, not from prose.** For a holding taken
+  to depth, run `scripts/position_sizing.py --from-decision decision.json
+  --portfolio ctx.json --liquidity liq.json --json` for target, current and
+  delta; do not size by hand. Build `ctx.json` from
+  `portfolio_metrics.portfolio_context` — omit it and the portfolio caps and
+  the concentration grade are reported as not checked, never as clear.
+
 Where a previous review exists, name the two deepest changes since it and what
 would have to happen for either to shift the decision on the largest position.
 

@@ -336,7 +336,11 @@ class ContextBudgets(unittest.TestCase):
         "references/red-flags-general.md": 18_500,
         "references/red-flags-quick.md": 9_200,
         "references/red-flags-smallcap.md": 22_000,
-        "references/scripts.md": 9_000,
+        # Raised from 9_000 in v3.5.0, deliberately: the catalogue gained
+        # three real scripts (position_sizing, kelly, forecast_scoring) and a
+        # catalogue that cannot list a script is not a catalogue. The file is
+        # loaded on demand only.
+        "references/scripts.md": 9_500,
         "references/source-registry.md": 15_000,
         "references/sweden.md": 21_000,
         "references/sweden-deep.md": 9_200,

@@ -825,7 +825,8 @@ wants, and it costs nothing to produce because both records already exist.
 `scripts/calibration.py` reports how earlier calls actually turned out; it is
 forward-only and read-only, so it never adjusts a score, a cap or a threshold,
 and it prints `INSUFFICIENT SAMPLE` rather than a hit rate on a handful of
-decisions.
+decisions. `scripts/forecast_scoring.py` scores the scenario probabilities
+themselves the same way — forward-only, adjusting nothing.
 
 ### The signal line — every depth closes with it
 
@@ -1027,6 +1028,8 @@ script grouped by role — load it when you need a tool a phase did not name.
 banners, separators and column padding that carry nothing the analysis uses,
 and that output is re-sent on every subsequent tool call.
 
+Position sizing is computed by `scripts/position_sizing.py`, never by hand.
+
 ## 13. Output language
 
 Answer in the language the user wrote in. **For a Swedish question, every word
@@ -1043,6 +1046,7 @@ The term table, which is fixed — never improvise a synonym:
 | `HOLD` | `BEHÅLL` |
 | `SELL` / `STRONG SELL` | `SÄLJ` / `STARKT SÄLJ` |
 | `ADD` / `TRIM` / `EXIT` (portfolio) | `ÖKA` / `MINSKA` / `SÄLJ HELT` |
+| `NO_BET` / `WATCH` / `INITIATE` (sizing) | `INGEN POSITION` / `BEVAKA` / `INITIERA` |
 | `LOW` / `MEDIUM` / `HIGH CONVICTION` | `LÅG` / `MEDEL` / `HÖG ÖVERTYGELSE` |
 | `Investment Score` | `Investeringsbetyg` |
 | `Data Confidence` | `Datasäkerhet` |
@@ -1067,7 +1071,8 @@ The term table, which is fixed — never improvise a synonym:
    break that mapping. They appear on the identity line only.
 
 **The scripts return English tokens; you translate them.**
-`portfolio_review.py` returns `EXIT`, `TRIM` and `HOLD`, `insider_se.py`
+`portfolio_review.py` returns `EXIT`, `TRIM` and `HOLD`, `position_sizing.py`
+returns `NO_BET`/`WATCH`/`INITIATE` alongside them, `insider_se.py`
 classifies trades as `BUY`/`SELL`/`OTHER`, and `thesis_ledger.py` stores the
 call in English. That is deliberate — the stored record must survive across
 languages and re-tests. Copying such a token straight into a Swedish answer is

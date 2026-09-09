@@ -642,6 +642,40 @@ def build_calibration_report(decisions, horizon_key, min_n=DEFAULT_MIN_N):
                     expect_entries.append(e)
         expectation_stats = stat_expectation_calibration(expect_entries, min_n)
 
+        # Position-sizing telemetry (decision_record.py's optional, additive
+        # `position_sizing` field - see its module comment). PURELY
+        # DESCRIPTIVE, same as everything else in this file: a distribution
+        # of realized outcomes by the action position_sizing.py took and by
+        # what constraint bound it, plus how many of the scored decisions
+        # carried this telemetry at all. "how many did not" is kept as its
+        # own count rather than folded into a bucket - the same "a check that
+        # could not run is not checked, counted separately" rule this
+        # codebase applies everywhere else. Nothing here feeds back into a
+        # score, a cap or a threshold.
+        sizing_rows = [(d, o) for d, o in rows
+                       if isinstance(d.get("position_sizing"), dict)
+                       and d["position_sizing"].get("action")]
+        n_with_sizing = len(sizing_rows)
+        n_without_sizing = len(rows) - n_with_sizing
+
+        by_sizing_action = {a: stat_expected_vs_realized(
+            er_rows([(d, o) for d, o in sizing_rows
+                    if d["position_sizing"].get("action") == a]), min_n)
+            for a in decision_record.POSITION_SIZING_ACTIONS}
+
+        # binding_constraint has no fixed vocabulary here (it is
+        # position_sizing.py's, not this file's, to define), so its buckets
+        # are keyed dynamically off whatever values were actually observed -
+        # the same approach stat_scenario_landing already uses for an
+        # open-ended axis.
+        binding_keys = sorted({
+            d["position_sizing"].get("binding_constraint") for d, o in sizing_rows
+            if d["position_sizing"].get("binding_constraint")})
+        by_sizing_binding_constraint = {k: stat_expected_vs_realized(
+            er_rows([(d, o) for d, o in sizing_rows
+                    if d["position_sizing"].get("binding_constraint") == k]), min_n)
+            for k in binding_keys}
+
         producers_out[producer] = {
             "n_decisions_total": len(prod_decisions),
             "n_scored": len(rows),
@@ -652,6 +686,12 @@ def build_calibration_report(decisions, horizon_key, min_n=DEFAULT_MIN_N):
             "hit_rate": hit_rate,
             "scenario_landing": scenario_stats,
             "expectation_calibration": expectation_stats,
+            "sizing_telemetry": {
+                "n_with_telemetry": n_with_sizing,
+                "n_without_telemetry": n_without_sizing,
+                "by_action": by_sizing_action,
+                "by_binding_constraint": by_sizing_binding_constraint,
+            },
         }
 
     return {"horizon": horizon_key, "min_n": min_n, "producers": producers_out}
@@ -676,6 +716,10 @@ CAVEATS = (
     "the measurement window are not included and are not verified here.",
     "Descriptive only: nothing in this report adjusts a score, a conviction "
     "cap or a screen threshold.",
+    "Position-sizing telemetry (decision_record.py's optional position_sizing "
+    "field) is collected the same way: a distribution of realized outcomes by "
+    "action and binding constraint, and a count of decisions without it - "
+    "never a feedback path into Kelly, a cap or a threshold.",
 )
 
 
@@ -734,6 +778,18 @@ def render_text(report, out=None):
         _print_wrapped(p, "    ", _fmt_counts(prod["scenario_landing"]))
         p("  expectation calibration (implied vs subsequently reported):")
         _print_wrapped(p, "    ", _fmt_counts(prod["expectation_calibration"]))
+        st = prod["sizing_telemetry"]
+        p("  position-sizing telemetry (collected only, never fed back):")
+        p("    %d with telemetry, %d not checked (no position_sizing stored)"
+          % (st["n_with_telemetry"], st["n_without_telemetry"]))
+        p("  realized outcome by sizing action:")
+        for a in decision_record.POSITION_SIZING_ACTIONS:
+            _print_wrapped(p, "    ", "%-10s %s" % (a, _fmt_er(st["by_action"][a])))
+        if st["by_binding_constraint"]:
+            p("  realized outcome by binding constraint:")
+            for k in sorted(st["by_binding_constraint"]):
+                _print_wrapped(p, "    ", "%-24s %s"
+                               % (k, _fmt_er(st["by_binding_constraint"][k])))
     p()
     for c in CAVEATS:
         for line in _wrap("- " + c, 86):
@@ -1015,10 +1071,14 @@ def selftest():
         if not cond:
             fails.append(label)
 
-    # add_months: day clamping across a leap boundary.
+    # add_months: day clamping across a leap boundary. Pre-existing bug fixed
+    # in passing: the old check built datetime.date(2027, 2, 29) to compare
+    # against, which raises ValueError on its own (2027 is not a leap year)
+    # before add_months is ever exercised - unrelated to position-sizing
+    # telemetry, but it blocked running this file's own --selftest at all.
     check("31 Jan + 1 month should clamp to the shortest February",
-          add_months(datetime.date(2027, 1, 31), 1) in
-          (datetime.date(2027, 2, 28), datetime.date(2027, 2, 29)))
+          add_months(datetime.date(2027, 1, 31), 1) ==
+          datetime.date(2027, 2, calendar.monthrange(2027, 2)[1]))
     check("31 May + 3 months should land on 31 Aug",
           add_months(datetime.date(2026, 5, 31), 3) == datetime.date(2026, 8, 31))
 
@@ -1156,6 +1216,27 @@ def selftest():
           rep_thesis["producers"]["analyze"]["by_thesis_status"]["WARNING"]["n"] == 1)
     check("a decision with no thesis carries into NO_THESIS, not WARNING",
           rep_thesis["producers"]["screen"]["by_thesis_status"]["NO_THESIS"]["n"] == 1)
+
+    # Position-sizing telemetry: grouped by action and binding_constraint,
+    # and decisions with no telemetry are counted separately rather than
+    # folded into a bucket.
+    d_sized = dict(d_analyze, position_sizing={
+        "action": "ADD", "binding_constraint": "concentration_cap",
+        "target": 0.06, "current": 0.04, "delta": 0.02})
+    rep_sizing = build_calibration_report([d_sized, d_screen], "3m", min_n=1)
+    st_analyze = rep_sizing["producers"]["analyze"]["sizing_telemetry"]
+    check("a decision carrying position_sizing must be counted as having telemetry",
+          st_analyze["n_with_telemetry"] == 1 and st_analyze["n_without_telemetry"] == 0)
+    check("the ADD bucket must see this decision's realized return",
+          st_analyze["by_action"]["ADD"]["n"] == 1)
+    check("the binding_constraint bucket must be keyed off the observed value",
+          st_analyze["by_binding_constraint"]["concentration_cap"]["n"] == 1)
+    st_screen = rep_sizing["producers"]["screen"]["sizing_telemetry"]
+    check("a decision with no position_sizing must count as not-checked, "
+          "never folded into a clean bucket",
+          st_screen["n_with_telemetry"] == 0 and st_screen["n_without_telemetry"] == 1)
+    check("a producer with no sizing telemetry must carry no binding_constraint buckets",
+          st_screen["by_binding_constraint"] == {})
 
     # Rendered text must fit the house 88-column limit.
     buf = io.StringIO()

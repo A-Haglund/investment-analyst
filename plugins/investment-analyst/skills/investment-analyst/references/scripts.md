@@ -70,6 +70,8 @@ banners and column padding that carry no information the analysis uses.
 | `scripts/portfolio_metrics.py` | Portfolio-level analysis: Herfindahl concentration, effective position count, sector and geographic exposure, correlation and hidden overlap, downside risk, Data Confidence, cash drag |
 | `scripts/research_delta.py` | What changed since last time: diffs a new decision record against the stored one and prints only what moved — the call, the conviction, the price, the fair value, the reason codes |
 | `scripts/calibration.py` | Forward-only outcome and calibration reporting on stored decisions. **Not a backtester**, deliberately: it attaches a realised outcome at 3, 6 and 12 months to decisions made from v3.0.0 on, prints `INSUFFICIENT SAMPLE` rather than a hit rate below its minimum, and feeds nothing back into a score, a cap or a threshold |
+| `scripts/forecast_scoring.py` | Brier and logarithmic scores on the scenario probabilities themselves, against a uniform and a base-rate forecast. Measures the forecast; adjusts nothing. Offers no calibration table below `calibration.py`'s sample floor, because an adjustment from a handful of outcomes is noise with a decimal point |
+| `scripts/position_sizing.py` | Kelly → uncertainty/conviction adjustment → liquidity and portfolio caps → target, current, delta, action; a missing input returns `insufficient_data`, and `NO_BET` is the judgement that the edge does not justify a position. `--from-decision` reads a decision record — validate it first |
 
 **Shared core — imported, not run**
 
@@ -80,6 +82,7 @@ banners and column padding that carry no information the analysis uses.
 | `scripts/finmath.py` | Shared financial math — CAGR from elapsed days rather than a period count, with a currency check |
 | `scripts/http_util.py` | One fetcher: retry with backoff on 429 and 5xx, and a collision-free cache key |
 | `scripts/_bootstrap.py` | The sibling-import idiom, written once and correctly |
+| `scripts/kelly.py` | Pure Kelly-fraction arithmetic from a scenario distribution — no network, no filesystem, no view on what to actually size (`--selftest` only) |
 
 **Persistent state and `INVESTMENT_ANALYST_HOME`.** `portfolio_store.py`,
 `thesis_ledger.py`, `watchlist_store.py` and `guidance_track.py` all keep their
