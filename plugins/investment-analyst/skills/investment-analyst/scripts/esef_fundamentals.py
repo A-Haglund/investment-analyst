@@ -90,6 +90,13 @@ CONCEPTS = {
     "payables": ["TradeAndOtherCurrentPayables", "CurrentTradePayables"],
     "goodwill": ["Goodwill"],
     "intangibles": ["IntangibleAssetsOtherThanGoodwill"],
+    # Instant concept - shares in issue at period end, used only for the
+    # KANDIDATINTAG dilution check (screen_metrics.dilution_pct_yoy). Least
+    # reliably tagged concept in this dict: ESEF Phase 1 does not mandate a
+    # single canonical tag for it, so "not found" here is common and expected,
+    # not a fetch error - see screen_value.py's quality-filter notes.
+    "shares_outstanding": ["NumberOfSharesOutstanding", "NumberOfSharesIssued",
+                           "IssuedCapitalOrdinaryShares"],
 }
 
 for _stream in (sys.stdout, sys.stderr):

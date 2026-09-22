@@ -1,6 +1,6 @@
 {
   "name": "investment-analyst",
-  "version": "3.5.0",
+  "version": "3.6.0",
   "description": "Sweden-first equity research on free, keyless primary sources - no API keys, no paid feeds. Provenance, temporal validity and the decision's own arithmetic are enforced in code, not instructions. Sizes the position too: scenario distribution to fractional Kelly, then uncertainty, conviction ceiling, bear-case risk budget, liquidity and portfolio caps. TTM engine, valuation gate, validated decision record, thesis ledger, portfolio review. Screens Stockholm, Copenhagen, Helsinki and Oslo.",
   "author": {
     "name": "Adam Haglund"

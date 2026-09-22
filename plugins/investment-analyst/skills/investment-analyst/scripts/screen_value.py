@@ -354,6 +354,9 @@ if screen_metrics is not None:
     margins_from_esef = getattr(screen_metrics, "margins_from_esef", None)
     margin_trend = getattr(screen_metrics, "margin_trend", None)
     passes_margin_floor = getattr(screen_metrics, "passes_margin_floor", None)
+    quality_from_esef = getattr(screen_metrics, "quality_from_esef", None)
+    dilution_pct_yoy = getattr(screen_metrics, "dilution_pct_yoy", None)
+    passes_quality_filter = getattr(screen_metrics, "passes_quality_filter", None)
     rank_candidates = getattr(screen_metrics, "rank_candidates", None)
 else:
     drawdown_from_high = None
@@ -361,6 +364,9 @@ else:
     margins_from_esef = None
     margin_trend = None
     passes_margin_floor = None
+    quality_from_esef = None
+    dilution_pct_yoy = None
+    passes_quality_filter = None
     rank_candidates = None
 
 
@@ -387,6 +393,17 @@ DEFAULT_LIMIT = 20
 DEFAULT_BUDGET_SECONDS = 900.0          # on-demand and deep - minutes, not seconds
 DEFAULT_ESEF_FILINGS = 3                # each filing carries ~2 years - enough for a trend
 MARGIN_METRICS = ("revenue", "cost_of_sales", "gross_profit", "operating_income")
+# KANDIDATINTAG (v4.16): net-debt/EBITDA, FCF conversion, ROIC and dilution -
+# fetched in the same ESEF pass as MARGIN_METRICS so a survivor needs only one
+# filings/get_json/extract round trip for both margins and quality, matching
+# fetch_esef_margin_inputs's existing "single-pass, newest-first-merge" shape.
+QUALITY_METRICS = ("cash", "borrowings", "borrowings_current", "lease_liabilities",
+                   "depreciation_amort", "cfo", "capex", "tax", "pretax_income",
+                   "equity", "shares_outstanding")
+DEFAULT_MAX_NET_DEBT_EBITDA = 3.5
+DEFAULT_MIN_FCF_CONVERSION = 0.0
+DEFAULT_MIN_ROIC = 10.0
+DEFAULT_MAX_DILUTION = 5.0
 
 # Small-cap preset: a convenience band for micro-cap discovery. Built to find the
 # segment screen_digest's own 2y backtest flagged as systematically mispriced. The
@@ -602,7 +619,7 @@ def fetch_esef_margin_inputs(lei, filings=DEFAULT_ESEF_FILINGS):
         except (Exception, SystemExit) as exc:       # pragma: no cover - defensive
             fetch_errors.append(str(exc))
             continue
-        for metric in MARGIN_METRICS:
+        for metric in MARGIN_METRICS + QUALITY_METRICS:
             names = esef_fundamentals.CONCEPTS[metric]
             found = esef_fundamentals.pick(facts, names, True)
             for period, (value, _unit, _concept) in found.items():
@@ -621,6 +638,13 @@ def evaluate_margins(issuer, as_of, gross_floor, op_floor, margin_mode="either",
     """Runs ONLY on value-filter + liquidity-floor + corporate-action
     survivors - see the module docstring's cost-control note. Returns a dict
     with `outcome` in {"pass", "cut", "not_classified"}.
+
+    On "pass" or "cut" (i.e. whenever the ESEF fetch itself succeeded), the
+    result also carries `raw_by_period` - the same merged fields
+    fetch_esef_margin_inputs returned, MARGIN_METRICS and QUALITY_METRICS
+    fields both included. evaluate_quality below reuses this instead of
+    re-fetching, so a survivor costs exactly one ESEF round trip for both
+    margins and KANDIDATINTAG quality, not two.
     """
     mic = issuer["primary"].get("mic")
     if mic not in REGULATED_MICS:
@@ -650,8 +674,59 @@ def evaluate_margins(issuer, as_of, gross_floor, op_floor, margin_mode="either",
             "operating_margin_pct": latest.get("operating_margin_pct"),
             "margin_trend": trend}
     if not ok:
-        return {"outcome": "cut", "reason": "margin_floor: %s" % reason, "margins": info}
-    return {"outcome": "pass", "margins": info}
+        return {"outcome": "cut", "reason": "margin_floor: %s" % reason, "margins": info,
+                "raw_by_period": margins_by_period}
+    return {"outcome": "pass", "margins": info, "raw_by_period": margins_by_period}
+
+
+def evaluate_quality(issuer, margins_by_period, max_net_debt_ebitda, min_fcf_conversion,
+                     min_roic, max_dilution):
+    """KANDIDATINTAG (v4.16 REGLER) - runs only on margin-floor survivors,
+    reusing the SAME margins_by_period this issuer's evaluate_margins call
+    already fetched (see the module docstring's cost-control note: a second
+    ESEF round trip per survivor is not justified when the first one already
+    carries every quality field via QUALITY_METRICS). Returns a dict with
+    `outcome` in {"pass", "cut", "not_classified"}, same convention as
+    evaluate_margins.
+
+    Unlike margins, a missing shares_outstanding tag does NOT force
+    not_classified or a cut on its own: it is the least reliably tagged
+    concept in this toolkit (see esef_fundamentals.CONCEPTS), and REGLER
+    KANDIDATINTAG explicitly leaves an over-threshold dilution reading to the
+    ANDRAPASS analyst's judgement, not a mechanical veto - so an unmeasurable
+    dilution passes through with a note rather than blocking the name."""
+    if quality_from_esef is None or passes_quality_filter is None:
+        return {"outcome": "not_classified",
+                "reason": "screen_metrics.py not importable - quality calculation unavailable"}
+    if margins_by_period is None:
+        return {"outcome": "not_classified",
+                "reason": "no ESEF data available - quality calculation unavailable"}
+
+    computed = quality_from_esef(margins_by_period)
+    latest_period = max(computed) if computed else None
+    latest = computed.get(latest_period) if latest_period else None
+
+    ok, reason = passes_quality_filter(latest, max_net_debt_ebitda=max_net_debt_ebitda,
+                                       min_fcf_conversion_pct=min_fcf_conversion,
+                                       min_roic_pct=min_roic)
+
+    dilution_pct = dilution_pct_yoy(computed) if dilution_pct_yoy else None
+    high_dilution = dilution_pct is not None and dilution_pct > max_dilution
+    info = dict(latest or {})
+    info["fiscal_period_end"] = latest_period
+    info["dilution_pct"] = dilution_pct
+    info["high_dilution"] = high_dilution
+
+    if not ok:
+        return {"outcome": "cut", "reason": "quality_filter: %s" % reason, "quality": info}
+    if high_dilution:
+        return {"outcome": "cut",
+                "reason": "quality_filter: dilution %+.2f%% > %.2f%% ceiling "
+                          "(shares outstanding grew YoY - candidate may still be added "
+                          "manually if ANDRAPASS finds an explicit thesis for it)"
+                          % (dilution_pct, max_dilution),
+                "quality": info}
+    return {"outcome": "pass", "quality": info}
 
 
 # ---------------------------------------------------------------------------
@@ -814,7 +889,7 @@ def run(args):
         corp_clean.append(iss)
 
     # --- stage 6: margins - corp_clean survivors only ------------------------
-    candidates = []
+    margin_survivors = []
     margin_cut_count = 0
     for iss in corp_clean:
         m = evaluate_margins(iss, as_of, args.gross_floor, args.op_floor, args.margin_mode)
@@ -829,11 +904,35 @@ def run(args):
             iss["margins"] = m.get("margins")
             margin_cut_count += 1
             continue
-        iss["disposition"] = "survived"
         iss["margins"] = m["margins"]
         iss["drawdown_pct"] = iss["drawdown"]["drawdown_pct"]
         iss["operating_margin_pct"] = m["margins"]["operating_margin_pct"]
         iss["margin_trend"] = m["margins"]["margin_trend"]
+        iss["_raw_esef_by_period"] = m.get("raw_by_period")
+        margin_survivors.append(iss)
+
+    # --- stage 6.5: KANDIDATINTAG quality filter - margin survivors only ----
+    # (v4.16 REGLER: net debt/EBITDA, FCF conversion, ROIC, dilution). Reuses
+    # the ESEF fields evaluate_margins already fetched for this issuer - see
+    # evaluate_margins' own docstring for why this is not a second round trip.
+    candidates = []
+    quality_cut_count = 0
+    for iss in margin_survivors:
+        q = evaluate_quality(iss, iss.pop("_raw_esef_by_period"), args.max_net_debt_ebitda,
+                             args.min_fcf_conversion, args.min_roic, args.max_dilution)
+        if q["outcome"] == "not_classified":
+            iss["disposition"] = "not_classified:quality"
+            iss["cut_reason"] = q["reason"]
+            not_classified.append(iss)
+            continue
+        if q["outcome"] == "cut":
+            iss["disposition"] = "cut:quality_filter"
+            iss["cut_reason"] = q["reason"]
+            iss["quality"] = q.get("quality")
+            quality_cut_count += 1
+            continue
+        iss["disposition"] = "survived"
+        iss["quality"] = q["quality"]
         candidates.append(iss)
 
     # --- stage 7: rank --------------------------------------------------------
@@ -849,7 +948,7 @@ def run(args):
     size_cut_total = size_cuts["above_ceiling"] + size_cuts["below_floor"]
     accounted = (value_cut_no_history + value_cut_criteria + liquidity_cut_total
                 + size_cut_total + len(technical) + len(not_classified)
-                + margin_cut_count + len(candidates))
+                + margin_cut_count + quality_cut_count + len(candidates))
 
     cuts = [
         {"stage": "universe", "count": total_issuers,
@@ -893,6 +992,11 @@ def run(args):
         {"stage": "margin_floor: below floor", "count": margin_cut_count,
          "reason": "gross or operating margin below the %.0f%%/%.0f%% floor"
                    % (args.gross_floor, args.op_floor)},
+        {"stage": "quality_filter: below floor", "count": quality_cut_count,
+         "reason": "KANDIDATINTAG (REGLER v4.16): net debt/EBITDA > %.1fx, or FCF "
+                   "conversion <= %.0f%%, or ROIC < %.0f%%, or dilution > %.0f%% YoY"
+                   % (args.max_net_debt_ebitda, args.min_fcf_conversion, args.min_roic,
+                      args.max_dilution)},
         {"stage": "candidates", "count": len(candidates),
          "reason": "survived every stage - the deep-value shortlist"},
     ])
@@ -905,6 +1009,9 @@ def run(args):
         "liquidity_floor": args.liquidity_floor, "include_illiquid": args.include_illiquid,
         "cap_floor": args.cap_floor, "cap_ceiling": args.cap_ceiling,
         "margin_mode": args.margin_mode, "small_cap": args.small_cap,
+        "max_net_debt_ebitda": args.max_net_debt_ebitda,
+        "min_fcf_conversion": args.min_fcf_conversion, "min_roic": args.min_roic,
+        "max_dilution": args.max_dilution,
         "universe": universe_summary,
         "cuts": cuts,
         "universe_accounted_for": accounted,
@@ -918,6 +1025,7 @@ def run(args):
         "not_classified_total": len(not_classified),
         "candidates": [_public_issuer(c, {"margins": c.get("margins"),
                                           "margin_trend": c.get("margin_trend"),
+                                          "quality": c.get("quality"),
                                           "corporate_action": c.get("corporate_action"),
                                           "data_confidence": c.get("data_confidence")})
                       for c in final],
@@ -943,6 +1051,20 @@ def _fmt_margin(m):
     return ("gross margin %s / operating margin %s (FY%s, %d months old, trend: %s)"
            % (_fmt_pct(m.get("gross_margin_pct")), _fmt_pct(m.get("operating_margin_pct")),
               m.get("fiscal_period_end"), m.get("age_months", -1), m.get("margin_trend")))
+
+
+def _fmt_quality(q):
+    if not q:
+        return "quality (KANDIDATINTAG): not classified"
+    nde = q.get("net_debt_ebitda")
+    nde_str = "%.2fx" % nde if nde is not None else "net cash / n.a."
+    dil = q.get("dilution_pct")
+    dil_str = _fmt_pct(dil) if dil is not None else "n.a."
+    flag = " [HIGH DILUTION]" if q.get("high_dilution") else ""
+    return ("quality: net debt/EBITDA %s, FCF conversion %s, ROIC %s, "
+           "dilution YoY %s%s"
+           % (nde_str, _fmt_pct(q.get("fcf_conversion_pct")),
+              _fmt_pct(q.get("roic_pct")), dil_str, flag))
 
 
 def _fmt_percentile(c):
@@ -986,6 +1108,7 @@ def print_text(result):
                 _fmt_pct(dd.get("drawdown_pct")), dd.get("high_date"),
                 _fmt_pct(c.get("return_365_pct"))))
         print("      %s" % _fmt_margin(c.get("margins")))
+        print("      %s" % _fmt_quality(c.get("quality")))
         price, ccy = c.get("price"), c.get("currency")
         if price is not None:
             # Local currency, always named: the trigger has to match what the
@@ -1055,6 +1178,18 @@ def main():
                     default=None, dest="margin_mode",
                     help="which margin floors must clear (default: either)")
     ap.add_argument("--small-cap", action="store_true", dest="small_cap")
+    ap.add_argument("--max-net-debt-ebitda", type=float, default=DEFAULT_MAX_NET_DEBT_EBITDA,
+                    dest="max_net_debt_ebitda",
+                    help="KANDIDATINTAG: max net debt/EBITDA, net cash always passes "
+                         "(default: %(default)s)")
+    ap.add_argument("--min-fcf-conversion", type=float, default=DEFAULT_MIN_FCF_CONVERSION,
+                    dest="min_fcf_conversion",
+                    help="KANDIDATINTAG: min free-cash-flow/EBITDA %% (default: %(default)s)")
+    ap.add_argument("--min-roic", type=float, default=DEFAULT_MIN_ROIC, dest="min_roic",
+                    help="KANDIDATINTAG: min ROIC %% (default: %(default)s)")
+    ap.add_argument("--max-dilution", type=float, default=DEFAULT_MAX_DILUTION, dest="max_dilution",
+                    help="KANDIDATINTAG: max YoY growth in shares outstanding %% "
+                         "before ANDRAPASS review is required (default: %(default)s)")
     ap.add_argument("--json", action="store_true", dest="as_json")
     args = ap.parse_args()
 

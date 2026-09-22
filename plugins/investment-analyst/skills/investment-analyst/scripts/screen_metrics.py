@@ -302,6 +302,195 @@ def passes_margin_floor(latest_margins, gross_floor=40.0, op_floor=15.0, mode="e
                         op_margin, op_floor))
 
 
+def quality_from_esef(esef_by_year):
+    """esef_by_year: same shape as margins_from_esef's input, but each year's
+    dict may additionally carry cash, borrowings, borrowings_current,
+    lease_liabilities, depreciation_amort, cfo, capex, tax, pretax_income,
+    shares_outstanding (all optional - ESEF Phase 1 tags primary statements
+    only, so note-level and balance-sheet detail is routinely absent).
+
+    Returns {"2024-12-31": {"net_debt": float|None, "ebitda": float|None,
+                            "net_debt_ebitda": float|None,
+                            "fcf": float|None, "fcf_conversion_pct": float|None,
+                            "roic_pct": float|None,
+                            "shares_outstanding": float|None}, ...}
+
+    net_debt = borrowings + borrowings_current + lease_liabilities - cash.
+    A missing borrowings/lease leg is treated as 0 (most issuers with no debt
+    tag simply have none), but a missing `cash` makes net_debt None outright -
+    treating an untagged cash balance as zero would UNDERSTATE leverage, the
+    unsafe direction for a filter meant to keep dangerously indebted names out.
+
+    ebitda = operating_income + depreciation_amort. A missing operating_income
+    makes both ebitda and every ratio derived from it None - EBITDA is not
+    "derived" from a gross figure the way margins_from_esef derives
+    gross_profit; there is no safe fallback formula for it here.
+
+    fcf = cfo - capex. capex is tagged as a cash OUTFLOW in ESEF's cash-flow
+    taxonomy (a positive "payments to acquire" figure representing money that
+    left); this function subtracts a positive capex from cfo. A missing cfo
+    or capex makes fcf None.
+
+    roic_pct = nopat / invested_capital * 100, nopat = operating_income * (1
+    - tax_rate), tax_rate = tax / pretax_income (clamped to [0, 1] - a tax
+    credit or a pretax loss can make the raw ratio negative or over 1, neither
+    of which is a usable effective rate here). invested_capital = borrowings +
+    borrowings_current + lease_liabilities + equity - cash (missing equity
+    makes this None; missing debt/lease legs are treated as 0, same as
+    net_debt above). A year with revenue-margin-equivalent required inputs
+    absent yields roic_pct None, never a fabricated number.
+
+    A year with operating_income missing, None, or 0 yields ebitda/net_debt_
+    ebitda/roic_pct all None for that year, mirroring margins_from_esef's
+    revenue==0 guard - never a ZeroDivisionError, never a fabricated 0.0."""
+    result = {}
+
+    for year_key, data in esef_by_year.items():
+        cash = data.get("cash")
+        borrowings = data.get("borrowings") or 0.0
+        borrowings_current = data.get("borrowings_current") or 0.0
+        lease_liabilities = data.get("lease_liabilities") or 0.0
+        operating_income = data.get("operating_income")
+        depreciation_amort = data.get("depreciation_amort")
+        cfo = data.get("cfo")
+        capex = data.get("capex")
+        tax = data.get("tax")
+        pretax_income = data.get("pretax_income")
+        equity = data.get("equity")
+        shares_outstanding = data.get("shares_outstanding")
+
+        total_debt = borrowings + borrowings_current + lease_liabilities
+
+        net_debt = None
+        if cash is not None:
+            net_debt = total_debt - cash
+
+        ebitda = None
+        if operating_income is not None and operating_income != 0:
+            ebitda = operating_income + (depreciation_amort or 0.0)
+
+        net_debt_ebitda = None
+        if net_debt is not None and ebitda is not None and ebitda != 0:
+            net_debt_ebitda = net_debt / ebitda
+
+        fcf = None
+        if cfo is not None and capex is not None:
+            fcf = cfo - capex
+
+        fcf_conversion_pct = None
+        if fcf is not None and ebitda is not None and ebitda != 0:
+            fcf_conversion_pct = (fcf / ebitda) * 100.0
+
+        roic_pct = None
+        if (operating_income is not None and operating_income != 0
+                and equity is not None):
+            tax_rate = 0.0
+            if tax is not None and pretax_income is not None and pretax_income != 0:
+                tax_rate = min(max(tax / pretax_income, 0.0), 1.0)
+            nopat = operating_income * (1.0 - tax_rate)
+            invested_capital = total_debt + equity - (cash or 0.0)
+            if invested_capital != 0:
+                roic_pct = (nopat / invested_capital) * 100.0
+
+        result[year_key] = {
+            "net_debt": net_debt,
+            "ebitda": ebitda,
+            "net_debt_ebitda": net_debt_ebitda,
+            "fcf": fcf,
+            "fcf_conversion_pct": fcf_conversion_pct,
+            "roic_pct": roic_pct,
+            "shares_outstanding": shares_outstanding,
+        }
+
+    return result
+
+
+def dilution_pct_yoy(quality_by_year):
+    """Percent change in shares_outstanding from the EARLIEST to the LATEST
+    year that both carry a value - same earliest/latest convention as
+    margin_trend, but a plain percent change rather than a categorical trend,
+    since KANDIDATINTAG's dilution check needs the number, not a label.
+    Positive means MORE shares outstanding now (dilution); negative means a
+    buyback. Returns None if fewer than 2 years carry shares_outstanding, or
+    if the earliest value is 0 (a percent change against zero is undefined,
+    not "infinite dilution")."""
+    years_with_shares = []
+    for year_key in sorted(quality_by_year.keys()):
+        shares = quality_by_year[year_key].get("shares_outstanding")
+        if shares is not None:
+            years_with_shares.append((year_key, shares))
+
+    if len(years_with_shares) < 2:
+        return None
+
+    earliest_shares = years_with_shares[0][1]
+    latest_shares = years_with_shares[-1][1]
+    if earliest_shares == 0:
+        return None
+
+    return (latest_shares - earliest_shares) / earliest_shares * 100.0
+
+
+def passes_quality_filter(latest_quality, max_net_debt_ebitda=3.5,
+                          min_fcf_conversion_pct=0.0, min_roic_pct=10.0):
+    """Checks the three single-year KANDIDATINTAG legs that do not need a
+    second year of history (the fourth, dilution, is dilution_pct_yoy above -
+    kept separate because it is a two-year comparison, not a single-year
+    floor, and the caller decides how to weigh it since REGLER allows an
+    explicit thesis override there that a pure function cannot express).
+
+    latest_quality: one year's dict from quality_from_esef, or None.
+
+    ALL THREE must pass:
+      - net_debt_ebitda: passes if None (net cash / no debt tagged - the safe
+        reading, since KANDIDATINTAG explicitly also accepts "eller negativ,
+        dvs nettokassa") OR <= max_net_debt_ebitda. A net_debt_ebitda that IS
+        present and exceeds the ceiling fails.
+      - fcf_conversion_pct: must be present AND > min_fcf_conversion_pct.
+        Missing data fails this leg - unlike net_debt_ebitda, KANDIDATINTAG
+        requires POSITIVE FCF conversion as an affirmative check, so "not
+        tagged" cannot be read as passing.
+      - roic_pct: must be present AND >= min_roic_pct. Missing data fails,
+        same reasoning as fcf_conversion_pct.
+
+    Returns (bool, reason_string) - the reason names every leg that failed
+    (or missing data as its own named reason), mirroring passes_margin_floor's
+    "both" mode so a cut here is equally auditable in the screen output."""
+    if latest_quality is None:
+        return (False, "no quality data available")
+
+    net_debt_ebitda = latest_quality.get("net_debt_ebitda")
+    fcf_conversion_pct = latest_quality.get("fcf_conversion_pct")
+    roic_pct = latest_quality.get("roic_pct")
+
+    failures = []
+
+    if net_debt_ebitda is not None and net_debt_ebitda > max_net_debt_ebitda:
+        failures.append("net debt/EBITDA {:.2f}x > {:.2f}x ceiling".format(
+            net_debt_ebitda, max_net_debt_ebitda))
+
+    if fcf_conversion_pct is None:
+        failures.append("FCF conversion not available")
+    elif fcf_conversion_pct <= min_fcf_conversion_pct:
+        failures.append("FCF conversion {:.2f}% <= {:.2f}% floor".format(
+            fcf_conversion_pct, min_fcf_conversion_pct))
+
+    if roic_pct is None:
+        failures.append("ROIC not available")
+    elif roic_pct < min_roic_pct:
+        failures.append("ROIC {:.2f}% < {:.2f}% floor".format(
+            roic_pct, min_roic_pct))
+
+    if failures:
+        return (False, "; ".join(failures))
+
+    net_debt_note = ("net debt/EBITDA {:.2f}x".format(net_debt_ebitda)
+                     if net_debt_ebitda is not None else "net cash / no debt tagged")
+    return (True, "{}, FCF conversion {:.2f}% > {:.2f}%, ROIC {:.2f}% >= {:.2f}%".format(
+        net_debt_note, fcf_conversion_pct, min_fcf_conversion_pct,
+        roic_pct, min_roic_pct))
+
+
 def rank_candidates(cands):
     """Sort most-attractive-first. Each candidate is a dict carrying at least
     drawdown_pct, operating_margin_pct (may be None) and margin_trend.
